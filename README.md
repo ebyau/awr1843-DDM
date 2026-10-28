@@ -1,215 +1,128 @@
 # DDM-MIMO firmware for the AWR1843AOP
 
-Firmware for the Texas Instruments AWR1843AOPEVM radar that uses Doppler-division multiplexing
-(DDM) MIMO. It is based on the out-of-box demo in TI's mmWave SDK 03.06.02 (`xwr18xx_mmw`,
-AOP variant) and keeps that demo's command interface and output format.
+Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that uses Doppler-division
+multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO. It is a modified copy of the
+out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`, AOP variant) and keeps that demo's
+command-line interface and UART output format, so existing configuration files and parsers
+still work. Without the new `ddmCfg` command the firmware behaves like the stock demo.
 
-## How DDM works
+## What DDM changes
 
-A MIMO radar needs to tell apart the signals from its transmit (TX) antennas so it can form a
-virtual antenna array for angle estimation.
+A MIMO radar forms a *virtual array* of TX × RX antenna pairs (here 3 × 4 = 12) to estimate
+angle of arrival (AoA). To do that it must tell the transmitters apart.
 
-- **TDM-MIMO** (TI's stock demo) transmits from one TX per chirp, cycling TX0 → TX1 → TX2.
-- **DDM-MIMO** (this firmware) transmits from all TX on every chirp. Each TX gets a per-chirp
-  phase code, so in the Doppler spectrum its copy of a target is shifted by a fixed number of
-  sub-bands. With 3 TX and 4 sub-bands, TX *k* lands in sub-band *k* relative to TX0 and one
-  sub-band stays empty. Finding the empty sub-band identifies which copy came from which TX,
-  which also resolves the target's velocity over the full chirp rate.
+- **TDM** (stock TI demo): one TX per chirp, cycling TX0 → TX1 → TX2. Each TX is sampled only
+  every third chirp, which limits the unambiguous velocity to about ±6.9 m/s with the stock
+  AOP chirp profile.
+- **DDM** (this firmware): all three TX transmit on every chirp. TX *k* adds a phase step to
+  each chirp, which shifts its copy of every target by *k* Doppler sub-bands. The 128-point
+  Doppler FFT is split into 4 sub-bands of 32 bins; three hold the TX copies and one stays empty.
+  The empty sub-band tells the processing which copy came from which TX, which recovers the
+  12-element virtual array and resolves velocity over the full chirp rate: about ±20.6 m/s
+  with 0.32 m/s resolution on the same chirp profile.
 
-Compared with TDM on the same chirp profile, each TX is on for every chirp instead of one in
-three, and there is no motion phase error between TX copies. The firmware runs either mode:
-`ddmCfg 0`, or no `ddmCfg` command, gives the stock TDM behaviour.
+![Range-Doppler map with DDM: each static target appears three times, in sub-bands 0, 1 and 2; sub-band 3 is empty](images/range-doppler-ddm.png)
 
-## Repository layout
+*Live range-Doppler map from `host/rd_view.py`. Each static target appears once per TX at the
+same range, one sub-band apart; sub-band 3 is empty.*
 
-```
-build.sh                 build the firmware image
-flash.sh                 flash an image over UART with UniFlash
-env.sh                   load the SDK build environment
-awr1843aop_serial.ccxml  UniFlash target configuration (serial)
-sdk/                     mmWave SDK 03.06.02 packages, including the modified sources
-host/                    Python tools to configure the radar and read its output
-  mmw_host.py              send a .cfg file and print a per-frame point-cloud summary
-  rd_view.py               live range-Doppler heat map with the sub-bands marked
-  ddm_check.py             report signal level per Doppler sub-band
-  profiles/                example DDM configurations
-pyproject.toml, uv.lock  Python dependencies for host/, managed with uv
-test/                    host unit tests (C, built with gcc)
-docs/                    design notes
-```
+On static targets, angles measured with DDM match the stock TDM firmware within one angle bin,
+and the empty sub-band is 31–35 dB below the TX copies.
 
-`sdk/` is a complete copy of the SDK so the firmware builds without a separate SDK install.
-Git tracks only the parts that are modified; everything else is stock TI.
+## Quick start
 
-## Firmware structure
+### 1. Prerequisites
 
-The radar has two processors. The **MSS** (ARM Cortex-R4F) handles the command line and
-configures the RF front end. The **DSS** (C674x DSP, with a hardware FFT accelerator) runs the
-signal processing chain each frame. DDM touches both.
+- Ubuntu x86-64 (tested on 26.04) and an AWR1843AOPEVM connected over USB.
+- TI tools installed under `~/ti`: [mmWave SDK 03.06.02](https://www.ti.com/tool/MMWAVE-SDK)
+  (installs the compilers, SYS/BIOS, XDCtools, DSPLIB and MATHLIB it needs) and
+  [UniFlash 9.7](https://www.ti.com/tool/UNIFLASH) in `~/ti/uniflash_9.7.0`.
+- System packages, serial port access and [uv](https://docs.astral.sh/uv/):
 
-| Stage | Runs on | Source | DDM behaviour |
-|---|---|---|---|
-| Command line | MSS | `ti/demo/xwr18xx/mmw/mss/mmw_cli.c` | `ddmCfg <numBands>` sets the number of Doppler sub-bands |
-| RF setup | MSS | `ti/demo/xwr18xx/mmw/mss/mss_main.c` | Enables the per-chirp TX phase shifters and programs the phase codes |
-| Chirp config parsing | MSS | `ti/demo/utils/mmwdemo_rfparser.c` | Validates DDM chirps; describes the radar cube as one TX block |
-| Range FFT | DSS | `ti/datapath/dpu/rangeproc` | Unchanged |
-| Doppler FFT | DSS | `ti/datapath/dpc/dpu/dopplerproc` | Unchanged; produces a full-width detection matrix |
-| Sub-band fold | DSS | `ti/datapath/dpc/objectdetection/objdethwa` | Averages the sub-bands into one detection matrix |
-| Detection (CFAR) | DSS | `ti/datapath/dpc/dpu/cfarcaproc` | Runs on the folded matrix |
-| Angle of arrival | DSS | `ti/datapath/dpc/dpu/aoa2dproc` | Per target: finds the empty sub-band, builds the virtual array, computes velocity |
-
-The DDM-specific math (fold, empty-band search, TX-to-Doppler-bin mapping) is in
-`ti/datapath/dpif/dpif_ddm.h`. These are pure C functions with no hardware dependencies, so the
-DSP firmware and the host tests use the same code.
-
-The first commit holds TI's unmodified sources. To see every change against them:
-
-```
-git diff $(git rev-list --max-parents=0 HEAD) -- sdk
-```
-
-## Prerequisites
-
-- Ubuntu (tested on 26.04), x86-64.
-- [mmWave SDK 03.06.02](https://www.ti.com/tool/MMWAVE-SDK) installed in `~/ti`, for the TI
-  compilers, SYS/BIOS, XDCtools and DSP libraries.
-- [UniFlash](https://www.ti.com/tool/UNIFLASH) 9.7 installed in `~/ti/uniflash_9.7.0`.
-- System packages:
-
-  ```
+  ```sh
   sudo dpkg --add-architecture i386
   sudo apt update
   sudo apt install libc6:i386 libstdc++6:i386 make mono-runtime gcc
+  sudo usermod -aG dialout $USER     # then log out and back in
   ```
 
-  The i386 libraries and Mono are needed by TI's image-packaging tools.
-- [uv](https://docs.astral.sh/uv/) for the Python host tools. `uv sync` in the repository root
-  creates the environment from `uv.lock`.
-- Serial port access: `sudo usermod -aG dialout $USER`, then log out and back in.
-- Stop ModemManager from probing the board's USB-UART bridge (Silicon Labs CP2105), which
-  interferes with flashing:
+- A udev rule so ModemManager leaves the board's USB-UART bridge (CP2105) alone:
 
-  ```
+  ```sh
   echo 'ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ENV{ID_MM_DEVICE_IGNORE}="1"' \
     | sudo tee /etc/udev/rules.d/71-mm-ignore-cp2105.rules
   sudo udevadm control --reload-rules
   ```
 
-If your TI tools are not in `~/ti`, set `MMWAVE_SDK_TOOLS_INSTALL_PATH` to their location before
-building, and adjust the UniFlash path in `flash.sh`.
+- The repository tracks only the SDK directories it modifies. Fill in the rest of `sdk/` from
+  your SDK install, then restore the modified files:
 
-## Build
+  ```sh
+  cp -r ~/ti/mmwave_sdk_03_06_02_00-LTS/firmware ~/ti/mmwave_sdk_03_06_02_00-LTS/packages sdk/
+  git checkout -- sdk
+  ```
 
+Details and alternatives: [docs/development.md](docs/development.md#environment).
+
+### 2. Build
+
+```sh
+./build.sh          # -> out/xwr18xx_mmw_aop_demo.bin
 ```
-./build.sh        # AOP antenna layout -> out/xwr18xx_mmw_aop_demo.bin
-./build.sh std    # TI's non-AOP layout -> out/xwr18xx_mmw_demo.bin (TDM only)
+
+### 3. Flash
+
+Set the SOP switches to flashing mode (SOP0 on, SOP1 off, SOP2 on), unplug and replug USB, then:
+
+```sh
+./flash.sh
 ```
 
-The script rebuilds the modified signal-processing libraries and the demo, and writes the full
-log to `out/build.log`. Use the AOP image for the AWR1843AOPEVM.
+Set the switches back to normal mode (SOP0 on, SOP1 off, SOP2 off) and replug USB again.
+See [flashing](docs/development.md#flashing) if it fails.
 
-## Flash
+### 4. Run
 
-The board is flashed over its UART. The boot mode is set with the SOP switches and only takes
-effect at power-up:
-
-| Mode | SOP0 | SOP1 | SOP2 |
-|---|---|---|---|
-| Flashing | on | off | on |
-| Normal (run firmware) | on | off | off |
-
-1. Set flashing mode, then unplug and replug the USB cable.
-2. Run `./flash.sh`, or `./flash.sh <image.bin> [port]` for another image or port.
-3. Set normal mode, then unplug and replug the USB cable.
-
-The bootloader accepts one flashing session per power-up. If an attempt fails, power-cycle the
-board before trying again.
-
-## Run
-
-The board appears as two serial ports:
-
-| Port | Use | Baud |
-|---|---|---|
-| `/dev/ttyUSB0` | Commands | 115200 |
-| `/dev/ttyUSB1` | Output data | 921600 |
-
-Send a configuration and print a summary of each frame:
-
-```
+```sh
 uv run python host/mmw_host.py host/profiles/ddm_aop.cfg --frames 20
 ```
 
-Each line shows the frame number, the number of detected points, and the nearest target's
-position (m) and radial velocity (m/s). Use `--cli` and `--data` for other ports.
+This sends the configuration on `/dev/ttyUSB0` and prints one line per frame from
+`/dev/ttyUSB1`: frame number, number of detected points, and the nearest point's position (m)
+and radial velocity (m/s).
 
-To see the sub-bands, show the live range-Doppler map (close the window to stop the radar):
+### 5. See the sub-bands
 
-```
+```sh
 uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg
 ```
 
-Each target appears once per TX at the same range, one sub-band apart, and one sub-band stays
-empty. The heat map is about 64 KB per frame, so this configuration runs at 1 frame per second.
-`--snapshot map.png` saves a single frame instead. `host/ddm_check.py` prints the level in each
-sub-band for the strongest range bin.
+This opens the live range-Doppler map shown above (close the window to stop the radar).
 
-## Configuring DDM
+## Documentation
 
-`host/profiles/ddm_aop.cfg` is a complete example. It is TI's `profile_3d_aop.cfg` with these
-changes:
-
-```
-chirpCfg 0 0 0 0 0 0 0 7      # every chirp enables all 3 TX (bit mask 7)
-chirpCfg 1 1 0 0 0 0 0 7
-chirpCfg 2 2 0 0 0 0 0 7
-chirpCfg 3 3 0 0 0 0 0 7
-frameCfg 0 3 32 0 100 1 0     # one chirp per sub-band, 32 loops: 128 chirps per frame
-cfarFovCfg -1 1 -21.2 21.2    # keep the Doppler field of view wide open
-ddmCfg 4                      # 4 Doppler sub-bands
-sensorStart
-```
-
-Rules:
-
-- `ddmCfg` goes before `sensorStart`. `sensorStop` clears it, so each configuration that uses DDM
-  must include it.
-- `numBands` must divide 64 (the phase shifter has 64 steps) and be larger than the number of
-  TX, up to 16.
-- Every chirp in the frame enables the same TX set, starting at TX0.
-- `frameCfg` has exactly `numBands` chirps per loop.
-- Detection runs before velocity is resolved, so the Doppler field of view (`cfarFovCfg ... 1`)
-  must cover the full range.
-- These options assume one TX per chirp and are rejected at `sensorStart` when DDM is on:
-  `measureRangeBiasAndRxChanPhase` (calibrate in TDM mode instead), `clutterRemoval`,
-  `calibDcRangeSig` and the range-azimuth heat map.
-
-If `sensorStart` fails, the command line prints the failing step and an error code.
-
-## Tests
-
-```
-make -C test          # firmware math and parser (C)
-uv run ruff check     # lint the Python host tools
-```
-
-- `ddm_test` simulates DDM chirps for 3 TX and 4 RX (the firmware's phase codes, window and
-  noise) across the full velocity range. It checks that each target's velocity is resolved to
-  the correct sub-band and that the virtual-array phases match the simulated antennas.
-- `rfparser_test` runs TI's chirp-configuration parser with stubbed SDK calls and checks TDM,
-  DDM and invalid configurations.
+| Page | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | How DDM works in detail, the MSS/DSS processing chain, buffer layouts, and where each DDM step lives in the code |
+| [docs/configuration.md](docs/configuration.md) | The `ddmCfg` command, rules for DDM chirp configurations, a worked example, and unsupported options |
+| [docs/development.md](docs/development.md) | Repository layout, toolchain, build variants, flashing details, tests, linting, coding conventions, and how to extend the firmware |
 
 ## Limitations
 
-- The detection accelerator holds at most 32 KB of detection matrix. Folding the sub-bands
-  keeps DDM within that limit (256 range bins × 128 chirps folds to 256 × 32).
-- A target between two Doppler bins can be reported one bin away, because the empty sub-band's
-  noise contributes to the folded matrix.
-- Velocity is resolved assuming one target per range/Doppler cell. Two targets at the same range
-  whose sub-band copies overlap can be assigned the wrong velocity.
+- A target that falls between two Doppler bins can be reported one bin (0.32 m/s) off.
+- One target per range/Doppler cell is assumed. Two targets at the same range whose sub-band
+  copies overlap can be given the wrong velocity.
+- Signals that do not carry the TX phase code, such as receiver spurs near maximum range,
+  are resolved to a wrong velocity.
+- Very strong returns leak about 17 dB into the empty sub-band.
 - On the AWR1843AOP the IF signal carries the negative of the programmed TX phase, so the
-  firmware programs a decreasing phase ramp. Other devices may differ.
+  firmware programs a decreasing phase ramp. Other devices may behave differently.
+- Range-bias/RX-phase measurement, static clutter removal, DC range calibration and the
+  range-azimuth heat map are not available in DDM mode. See
+  [configuration](docs/configuration.md#unsupported-options).
 
 ## License
 
-The SDK sources are © Texas Instruments and distributed under the terms in their file headers.
+The files under `sdk/` are TI mmWave SDK sources, © Texas Instruments, distributed under the
+terms stated in their file headers (a BSD-style license that requires the copyright notice to
+be kept in source and binary redistributions).
