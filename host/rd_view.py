@@ -4,7 +4,7 @@ Shows the unfolded Doppler spectrum with the DDM sub-band boundaries marked, so
 each target's TX copies and the empty sub-band are visible. The configuration
 must enable the range-Doppler heat map (guiMonitor ... 1 ...).
 
-Usage: python3 rd_view.py CONFIG.cfg [--bands 4] [--snapshot out.png]
+Usage: uv run python host/rd_view.py CONFIG.cfg [--bands 4] [--snapshot out.png]
 """
 
 from __future__ import annotations
@@ -23,10 +23,9 @@ from matplotlib.axes import Axes
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.image import AxesImage
 
-from mmw_host import Frame, FrameError, read_frame, send_config
+from mmw_host import Frame, FrameError, range_axis, read_frame, send_config
 
 TLV_RANGE_DOPPLER = 5
-SPEED_OF_LIGHT = 3e8
 Q8_TO_DB = 20 * np.log10(2) / 2**8  # heat map values are log2 magnitude in Q8
 DYNAMIC_RANGE_DB = 40.0
 
@@ -35,19 +34,6 @@ CMAP = LinearSegmentedColormap.from_list(
     "seq_blue", ["#f4f8fd", "#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
 INK = "#1f2933"
 MUTED = "#6b7785"
-
-
-def range_axis(cfg: Path) -> tuple[int, float]:
-    """Number of range bins and metres per bin, from the configuration's profileCfg."""
-    for line in cfg.read_text().splitlines():
-        fields = line.split()
-        if fields and fields[0] == "profileCfg":
-            slope_hz_per_s = float(fields[8]) * 1e12
-            num_samples = int(fields[10])
-            sample_rate_hz = float(fields[11]) * 1e3
-            num_bins = 1 << (num_samples - 1).bit_length()
-            return num_bins, SPEED_OF_LIGHT * sample_rate_hz / (2 * slope_hz_per_s * num_bins)
-    raise ValueError(f"no profileCfg in {cfg}")
 
 
 def to_db(raw: bytes, num_range_bins: int) -> np.ndarray:

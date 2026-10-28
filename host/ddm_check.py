@@ -4,7 +4,7 @@ Runs a DDM config, then, for the strongest range bin, reports the energy in each
 Doppler sub-band. With DDM working, the TX bands hold the target and the last
 band is empty (tens of dB lower).
 
-Usage: python3 ddm_check.py CONFIG.cfg [--bands 4] [--frames 5]
+Usage: uv run python host/ddm_check.py CONFIG.cfg [--bands 4] [--frames 5]
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import serial
 
-from mmw_host import read_frame, send_config
+from mmw_host import FrameError, range_axis, read_frame, send_config
 
 TLV_RANGE_DOPPLER = 5
 LOG2_TO_DB = 20 * np.log10(2) / 2**8  # heatmap values are log2 magnitude in Q8
@@ -33,10 +33,11 @@ def main() -> int:
     parser.add_argument("config", type=Path)
     parser.add_argument("--bands", type=int, default=4)
     parser.add_argument("--frames", type=int, default=5)
-    parser.add_argument("--range-bins", type=int, default=256)
     parser.add_argument("--cli", default="/dev/ttyUSB0")
     parser.add_argument("--data", default="/dev/ttyUSB1")
     args = parser.parse_args()
+
+    num_range_bins, _ = range_axis(args.config)
 
     with serial.Serial(args.cli, 115200, timeout=6) as cli, \
          serial.Serial(args.data, 921600, timeout=3) as data:
@@ -44,12 +45,16 @@ def main() -> int:
         data.reset_input_buffer()
         try:
             for _ in range(args.frames):
-                frame = read_frame(data)
+                try:
+                    frame = read_frame(data)
+                except FrameError as err:
+                    print(f"skipped corrupted frame: {err}", file=sys.stderr)
+                    continue
                 raw = frame.tlvs.get(TLV_RANGE_DOPPLER)
                 if raw is None:
                     print(f"frame {frame.number}: no range-Doppler heatmap TLV")
                     continue
-                heatmap = np.frombuffer(raw, dtype="<u2").reshape(args.range_bins, -1)
+                heatmap = np.frombuffer(raw, dtype="<u2").reshape(num_range_bins, -1)
                 levels = band_levels_db(heatmap.astype(float), args.bands)
                 rel = levels - levels.max()
                 bands = "  ".join(f"band{i}: {r:6.1f} dB" for i, r in enumerate(rel))

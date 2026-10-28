@@ -1,6 +1,6 @@
 """Configure the mmw demo over the CLI port and decode frames from the data port.
 
-Usage: python3 mmw_host.py CONFIG.cfg [--frames N] [--cli PORT] [--data PORT]
+Usage: uv run python host/mmw_host.py CONFIG.cfg [--frames N] [--cli PORT] [--data PORT]
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ TLV_HEADER = struct.Struct("<2I")  # type, payload length
 POINT = struct.Struct("<4f")  # x, y, z, doppler velocity
 TLV_DETECTED_POINTS = 1
 MAX_FRAME_BYTES = 1 << 20  # well above the largest demo frame (heat maps included)
+SPEED_OF_LIGHT = 3e8
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,19 @@ class Frame:
     def points(self) -> list[Point]:
         payload = self.tlvs.get(TLV_DETECTED_POINTS, b"")
         return [Point(*p) for p in POINT.iter_unpack(payload)]
+
+
+def range_axis(cfg: Path) -> tuple[int, float]:
+    """Number of range bins and metres per bin, from the configuration's profileCfg."""
+    for line in cfg.read_text().splitlines():
+        fields = line.split()
+        if fields and fields[0] == "profileCfg":
+            slope_hz_per_s = float(fields[8]) * 1e12
+            num_samples = int(fields[10])
+            sample_rate_hz = float(fields[11]) * 1e3
+            num_bins = 1 << (num_samples - 1).bit_length()
+            return num_bins, SPEED_OF_LIGHT * sample_rate_hz / (2 * slope_hz_per_s * num_bins)
+    raise ValueError(f"no profileCfg in {cfg}")
 
 
 def send_config(cli: serial.Serial, cfg: Path) -> None:
