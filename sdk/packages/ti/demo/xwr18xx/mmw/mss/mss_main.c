@@ -2221,19 +2221,19 @@ static void MmwDemo_DPC_ObjectDetection_reportFxn
 
                 memUsage = &cfg->memUsage;
 
-                System_printf("============ Heap Memory Stats ============\n");
-                System_printf("%20s %12s %12s %12s %12s\n", " ", "Size", "Used", "Free", "DPCUsed");
-                System_printf("%20s %12d %12d %12d %12d\n", "System Heap(L2)",
+                CLI_write("============ Heap Memory Stats ============\n");
+                CLI_write("%20s %12s %12s %12s %12s\n", " ", "Size", "Used", "Free", "DPCUsed");
+                CLI_write("%20s %12d %12d %12d %12d\n", "System Heap(L2)",
                               memUsage->SystemHeapTotal, memUsage->SystemHeapUsed,
                               memUsage->SystemHeapTotal - memUsage->SystemHeapUsed,
                               memUsage->SystemHeapDPCUsed);
 
-                System_printf("%20s %12d %12d %12d\n", "L3",
+                CLI_write("%20s %12d %12d %12d\n", "L3",
                               memUsage->L3RamTotal,
                               memUsage->L3RamUsage,
                               memUsage->L3RamTotal - memUsage->L3RamUsage);
 
-                System_printf("%20s %12d %12d %12d\n", "localRam(L2)",
+                CLI_write("%20s %12d %12d %12d\n", "localRam(L2)",
                               memUsage->CoreLocalRamTotal,
                               memUsage->CoreLocalRamUsage,
                               memUsage->CoreLocalRamTotal - memUsage->CoreLocalRamUsage);

@@ -100,7 +100,9 @@ uint8_t gMmwL3[SOC_L3RAM_SIZE];
 #pragma DATA_SECTION(gMmwL3, ".l3ram");
 
  /*! L2 RAM buffer for object detection DPC */
-#define MMWDEMO_OBJDET_L2RAM_SIZE (49U * 1024U)
+/* 1 KB below TI's 49 KB so the DSS image fits in L2 with headroom for build-path
+ * dependent assert strings; the DPC reports its usage at sensorStart. */
+#define MMWDEMO_OBJDET_L2RAM_SIZE (48U * 1024U)
 uint8_t gDPC_ObjDetL2Heap[MMWDEMO_OBJDET_L2RAM_SIZE];
 #ifndef SOC_XWR68XX
 /* EDMA 4K silicon bug related : Align heap to 4K address boundary so that
