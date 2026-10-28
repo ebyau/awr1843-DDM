@@ -299,11 +299,14 @@ Host tools (Python): type hints, `from __future__ import annotations`, standard-
   `NUM_TX`, `NUM_BANDS` and `NUM_CHIRPS` constants) before testing on hardware.
 - **Another device.** Check the sign of the phase shift in the IF signal on that device; the
   AWR1843AOP inverts it (see `MmwDemo_ddmPhaseShift()` and `txPhase()` in `test/ddm_test.c`).
-- **DSP memory.** The DSS L2 RAM is fully allocated: TI sizes the demo's heaps to fill it, and
-  only a few tens of bytes of `L2SRAM_UMAP0` are free. Any DSS code you add can fail to link
-  with `program will not fit into available memory`. Check the `MEMORY CONFIGURATION` table in
-  `sdk/packages/ti/demo/xwr18xx/mmw/xwr18xx_mmw_aop_demo_dss.map`; to free space, reduce
-  `MMWDEMO_OBJDET_L2RAM_SIZE` in `dss/dss_main.c` after confirming how much of it the DPC uses.
+- **DSP memory.** The DSS L2 RAM is almost fully allocated: the DPC heap
+  (`MMWDEMO_OBJDET_L2RAM_SIZE` in `dss/dss_main.c`, 48 KB) leaves about 1 KB of
+  `L2SRAM_UMAP0` free. DSS code that outgrows it fails to link with `program will not fit into
+  available memory`; the `MEMORY CONFIGURATION` table in
+  `sdk/packages/ti/demo/xwr18xx/mmw/xwr18xx_mmw_aop_demo_dss.map` shows the margin. Assert
+  messages embed source paths, so the margin also shrinks with a longer checkout path. Before
+  shrinking the heap, check the `localRam(L2)` line of the heap statistics that `sensorStart`
+  prints, for every configuration you need to support.
 - **New host tool.** Put it in `host/`, reuse `send_config()` and `read_frame()` from
   `mmw_host.py`, add dependencies with `uv add`, and run `uv run ruff check`.
 - **New profile.** Start from `host/profiles/ddm_aop.cfg` and follow the rules in
