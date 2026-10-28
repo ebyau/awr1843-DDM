@@ -71,7 +71,7 @@ footer { color: var(--muted); font-size: 0.82rem; }
     <ol class="phases">
       <li><span class="pill done">Done</span><span><b>1. Baseline.</b> Stock AOP demo rebuilt from source (0 warnings), flashed and verified on the board: same detections as TI's prebuilt image.</span></li>
       <li><span class="pill done">Done</span><span><b>2. TX side.</b> All 3 TX on every chirp with per-chirp phase codes, set by a new <code>ddmCfg</code> command. Measured on a reflector: three copies within 2&ndash;4 dB of each other, empty band 31&ndash;35 dB down.</span></li>
-      <li><span class="pill active">Next</span><span><b>3. Processing.</b> Doppler FFT over the full chirp sequence, TX separation by sub-band, empty-band velocity disambiguation, 12-channel virtual array into angle-of-arrival.</span></li>
+      <li><span class="pill done">Done</span><span><b>3. Processing.</b> Verified on static targets: DDM angles match TDM within one angle bin and velocity reads 0. A receiver spur at max range is mis-resolved (it carries no phase code); a band-consistency check is proposed.</span></li>
       <li><span class="pill todo">Planned</span><span><b>4. Validation.</b> Python host tool; compare range, velocity and angle against the stock TDM firmware on real targets.</span></li>
     </ol>
   </section>
@@ -115,7 +115,7 @@ footer { color: var(--muted); font-size: 0.82rem; }
           <tr><td>TX per chirp</td><td class="num">1</td><td class="num">3</td></tr>
           <tr><td>Chirps per frame</td><td class="num">96 (3 × 32)</td><td class="num">128 (4 × 32)</td></tr>
           <tr><td>Doppler FFT size</td><td class="num">32 per TX</td><td class="num">128 (32 per band)</td></tr>
-          <tr><td>Max unambiguous velocity</td><td class="num">±7.1 m/s</td><td class="num worse">±5.3 m/s</td></tr>
+          <tr><td>Max unambiguous velocity</td><td class="num">±7.1 m/s</td><td class="num better">±21.2 m/s</td></tr>
           <tr><td>Velocity resolution</td><td class="num">0.44 m/s</td><td class="num better">0.33 m/s</td></tr>
           <tr><td>Energy per TX per frame</td><td class="num">32 chirps</td><td class="num better">128 chirps</td></tr>
           <tr><td>Motion phase error between TX</td><td>Needs compensation</td><td class="better">None (TX simultaneous)</td></tr>
@@ -130,7 +130,7 @@ footer { color: var(--muted); font-size: 0.82rem; }
     <div class="eyebrow">Choices</div>
     <h2>Design decisions</h2>
     <div class="decisions">
-      <div class="decision"><b>4 bands with 1 empty, instead of 3 bands.</b><span>Costs 25% of max velocity versus TDM, but gives a direct way to tell the TX copies apart. With 3 bands there is no reference and fast targets are mislabeled.</span></div>
+      <div class="decision"><b>4 bands with 1 empty, instead of 3 bands.</b><span>The empty band identifies which copy belongs to which TX, which resolves velocity over the full chirp rate (&plusmn;21.2 m/s, versus &plusmn;7.1 m/s for TDM). With 3 bands there is no reference and fast targets are mislabeled. Signals without the phase code, such as receiver spurs, cannot be resolved this way.</span></div>
       <div class="decision"><b>Phase pattern in 4 static chirp definitions.</b><span>Avoids the dynamic per-chirp phase API and any runtime chirp RAM updates; configuration stays a one-time setup before sensor start.</span></div>
       <div class="decision"><b>Fold the detection matrix across sub-bands.</b><span>The CFAR accelerator needs the whole range-Doppler detection matrix in 32 KB. A raw 256 &times; 128 matrix is 64 KB and stalls the DSP, so the 4 sub-bands are summed into one 256 &times; 32 matrix (16 KB, same as stock) before detection. This also adds the energy of the 3 TX copies.</span></div>
       <div class="decision"><b>Make the AOP datapath DDM-aware.</b><span>TI's AOP chain only accepts one TX per chirp. The chirp parser and Doppler stage learn a DDM mode instead of a separate code path. Phase 2 is checked on the standard (non-AOP) chain, which accepts all-TX chirps.</span></div>
