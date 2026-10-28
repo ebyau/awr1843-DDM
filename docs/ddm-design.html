@@ -1,0 +1,153 @@
+<title>AWR1843AOP DDM Firmware</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column, lab-notebook feel; tables and one spectrum figure carry the numbers. */
+:root {
+  --bg: #f6f8fa; --surface: #ffffff; --fg: #17202b; --muted: #556373; --line: #d5dde6;
+  --accent: #1d5fa6; --tx0: #1d5fa6; --tx1: #0f8a7e; --tx2: #7a4fb0; --empty: #c27a12;
+  --ok: #1f7a3f; --warn: #a8640c; --todo: #6b7785;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161c; --surface: #18202a; --fg: #e3e9ef; --muted: #98a6b5; --line: #2b3643;
+  --accent: #6aa8ea; --tx0: #6aa8ea; --tx1: #4cc4b5; --tx2: #b493e0; --empty: #e5a54a;
+  --ok: #5cc485; --warn: #e5a54a; --todo: #8a97a5; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #18202a; --fg: #e3e9ef; --muted: #98a6b5; --line: #2b3643;
+  --accent: #6aa8ea; --tx0: #6aa8ea; --tx1: #4cc4b5; --tx2: #b493e0; --empty: #e5a54a;
+  --ok: #5cc485; --warn: #e5a54a; --todo: #8a97a5; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body);
+  padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 2rem; font-weight: 600; }
+h2 { font-size: 1.25rem; font-weight: 600; }
+p { margin: 0; max-width: 65ch; }
+section { display: grid; gap: 14px; }
+.eyebrow { font: 500 0.75rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); }
+code, .num { font-family: var(--mono); font-size: 0.88em; }
+.num { font-variant-numeric: tabular-nums; }
+
+.phases { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.phases li { display: grid; grid-template-columns: 7.5rem 1fr; gap: 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.pill { font: 500 0.72rem var(--mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; justify-self: start; }
+.pill.active { color: var(--accent); } .pill.todo { color: var(--todo); } .pill.done { color: var(--ok); }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 0.72rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+td.num { white-space: nowrap; }
+.better { color: var(--ok); } .worse { color: var(--warn); }
+
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 18px; display: grid; gap: 10px; }
+figure svg { width: 100%; height: auto; max-width: 100%; }
+figcaption { font-size: 0.85rem; color: var(--muted); }
+
+.decisions { display: grid; gap: 14px; }
+.decision { display: grid; gap: 4px; }
+.decision b { font-weight: 500; }
+.decision span { color: var(--muted); font-size: 0.92rem; }
+ul.risks { margin: 0; padding-left: 1.1rem; display: grid; gap: 6px; }
+footer { color: var(--muted); font-size: 0.82rem; }
+</style>
+
+<main>
+  <header style="display:grid;gap:10px">
+    <div class="eyebrow">Firmware design · mmWave SDK 03.06.02 · AWR1843AOP</div>
+    <h1>Doppler-division MIMO on the AWR1843AOP</h1>
+    <p class="lede">Replace the stock demo's time-division MIMO (one TX per chirp) with Doppler-division MIMO: all three TX fire on every chirp, each with its own per-chirp phase ramp, and the DSP separates them in the Doppler spectrum.</p>
+  </header>
+
+  <section>
+    <div class="eyebrow">Status</div>
+    <h2>Phases</h2>
+    <ol class="phases">
+      <li><span class="pill active">In progress</span><span><b>1. Baseline.</b> Rebuild the stock AOP demo from source and flash it, to prove the toolchain before changing anything.</span></li>
+      <li><span class="pill todo">Next</span><span><b>2. TX side.</b> Enable all 3 TX on every chirp and program the per-chirp phase shifters.</span></li>
+      <li><span class="pill todo">Planned</span><span><b>3. Processing.</b> Doppler FFT over the full chirp sequence, TX separation by sub-band, empty-band velocity disambiguation, 12-channel virtual array into angle-of-arrival.</span></li>
+      <li><span class="pill todo">Planned</span><span><b>4. Validation.</b> Python host tool; compare range, velocity and angle against the stock TDM firmware on real targets.</span></li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow">Core idea</div>
+    <h2>Four Doppler sub-bands, one left empty</h2>
+    <p>Each TX advances its phase by a fixed step every chirp. A constant phase step is a frequency shift in slow time, so each TX's copy of a target lands in its own quarter of the Doppler spectrum. Using 4 bands for 3 TX leaves one band empty; finding the empty band tells the DSP which copy belongs to which TX, which resolves velocity ambiguity.</p>
+    <figure>
+      <svg viewBox="0 0 640 170" role="img" aria-label="Doppler spectrum split into four bands: TX0, TX1, TX2, and an empty band">
+        <g font-family="IBM Plex Mono, monospace" font-size="12">
+          <rect x="20" y="30" width="150" height="80" fill="var(--tx0)" opacity="0.16"/>
+          <rect x="170" y="30" width="150" height="80" fill="var(--tx1)" opacity="0.16"/>
+          <rect x="320" y="30" width="150" height="80" fill="var(--tx2)" opacity="0.16"/>
+          <rect x="470" y="30" width="150" height="80" fill="none" stroke="var(--empty)" stroke-dasharray="5 4"/>
+          <line x1="20" y1="110" x2="620" y2="110" stroke="var(--muted)"/>
+          <line x1="75" y1="110" x2="75" y2="42" stroke="var(--tx0)" stroke-width="3"/>
+          <line x1="225" y1="110" x2="225" y2="48" stroke="var(--tx1)" stroke-width="3"/>
+          <line x1="375" y1="110" x2="375" y2="45" stroke="var(--tx2)" stroke-width="3"/>
+          <text x="95" y="24" text-anchor="middle" fill="var(--tx0)">TX0 · 0° step</text>
+          <text x="245" y="24" text-anchor="middle" fill="var(--tx1)">TX1 · 90° step</text>
+          <text x="395" y="24" text-anchor="middle" fill="var(--tx2)">TX2 · 180° step</text>
+          <text x="545" y="24" text-anchor="middle" fill="var(--empty)">empty · 270°</text>
+          <text x="20" y="130" fill="var(--muted)">0</text>
+          <text x="620" y="130" text-anchor="end" fill="var(--muted)">128 Doppler bins</text>
+          <text x="320" y="156" text-anchor="middle" fill="var(--muted)">one target → three copies, 32 bins apart</text>
+        </g>
+      </svg>
+      <figcaption>Phase steps are multiples of the hardware's 5.625° resolution (90° = 16 LSB, 180° = 32 LSB), so the pattern repeats every 4 chirps and fits in 4 chirp definitions looped 32 times.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="eyebrow">Defaults</div>
+    <h2>Parameters: stock TDM vs. DDM</h2>
+    <p>Chirp profile is unchanged from <code>profile_3d_aop.cfg</code>: 77 GHz, 100 MHz/µs slope, 256 samples, 46 µs chirp period.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Quantity</th><th>TDM (stock)</th><th>DDM (default)</th></tr></thead>
+        <tbody>
+          <tr><td>TX per chirp</td><td class="num">1</td><td class="num">3</td></tr>
+          <tr><td>Chirps per frame</td><td class="num">96 (3 × 32)</td><td class="num">128 (4 × 32)</td></tr>
+          <tr><td>Doppler FFT size</td><td class="num">32 per TX</td><td class="num">128 (32 per band)</td></tr>
+          <tr><td>Max unambiguous velocity</td><td class="num">±7.1 m/s</td><td class="num worse">±5.3 m/s</td></tr>
+          <tr><td>Velocity resolution</td><td class="num">0.44 m/s</td><td class="num better">0.33 m/s</td></tr>
+          <tr><td>Energy per TX per frame</td><td class="num">32 chirps</td><td class="num better">128 chirps</td></tr>
+          <tr><td>Motion phase error between TX</td><td>Needs compensation</td><td class="better">None (TX simultaneous)</td></tr>
+          <tr><td>Virtual array</td><td class="num">12 (3 TX × 4 RX)</td><td class="num">12, same geometry</td></tr>
+          <tr><td>Radar cube</td><td class="num">384 KB</td><td class="num">512 KB</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Choices</div>
+    <h2>Design decisions</h2>
+    <div class="decisions">
+      <div class="decision"><b>4 bands with 1 empty, instead of 3 bands.</b><span>Costs 25% of max velocity versus TDM, but gives a direct way to tell the TX copies apart. With 3 bands there is no reference and fast targets are mislabeled.</span></div>
+      <div class="decision"><b>Phase pattern in 4 static chirp definitions.</b><span>Avoids the dynamic per-chirp phase API and any runtime chirp RAM updates; configuration stays a one-time setup before sensor start.</span></div>
+      <div class="decision"><b>Keep the chirp profile and antenna geometry.</b><span>Only the multiplexing changes, so results can be compared one-to-one with the stock firmware, and the existing angle-of-arrival stage is reused.</span></div>
+      <div class="decision"><b>Modify the stock demo in place, minimally.</b><span>A copy of the TI demo lives in this project; changes stay confined to chirp setup, Doppler processing and TX separation. No parallel framework, no dead code paths.</span></div>
+      <div class="decision"><b>Code standard.</b><span>C99, TI SDK naming and file layout, MISRA-C:2012 style (fixed-width types, no dynamic allocation, checked return values), builds clean with warnings enabled. Host tools in typed, linted Python.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Watch list</div>
+    <h2>Risks</h2>
+    <ul class="risks">
+      <li><b>Three TX at once on the AOP module:</b> higher power and heat than TDM; may need reduced TX backoff or duty cycle.</li>
+      <li><b>Memory:</b> the larger radar cube must still fit in L3 alongside detection buffers; fallback is 128 range bins.</li>
+      <li><b>Phase-shifter accuracy:</b> uncalibrated phase error leaks energy into the empty band; may need per-device phase calibration.</li>
+      <li><b>No debug probe:</b> debugging relies on UART logs and output data, and each flash needs a manual power cycle.</li>
+    </ul>
+  </section>
+
+  <footer>Updated 2026-10-27 · Project folder <code>~/DDM</code> · Numbers derived from the stock AOP chirp profile at λ ≈ 3.9 mm.</footer>
+</main>

@@ -1,0 +1,32 @@
+# Track only the SDK sources we modify; everything else in sdk/ is stock TI.
+/sdk/*
+!/sdk/packages/
+/sdk/packages/*
+!/sdk/packages/ti/
+/sdk/packages/ti/*
+!/sdk/packages/ti/demo/
+!/sdk/packages/ti/datapath/
+!/sdk/packages/ti/board/
+/sdk/packages/ti/demo/*
+!/sdk/packages/ti/demo/xwr18xx/
+!/sdk/packages/ti/demo/utils/
+/sdk/packages/ti/demo/xwr18xx/*
+!/sdk/packages/ti/demo/xwr18xx/mmw/
+
+# Build outputs, prebuilt binaries and generated docs
+docs/doxygen/
+*.bin
+*.xe674
+*.xer4f
+*.ae674
+*.aer4f
+*.oe674
+*.oer4f
+*.lib
+*.map
+*.rov.xs
+*.pp
+*.dep
+*.d
+obj_*/
+lib/
