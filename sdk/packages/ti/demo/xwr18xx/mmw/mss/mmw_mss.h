@@ -53,6 +53,7 @@
 #include <ti/demo/utils/mmwdemo_monitor.h>
 #include <ti/demo/xwr18xx/mmw/include/mmw_output.h>
 #include <ti/datapath/dpc/objectdetection/objdethwa/objectdetection.h>
+#include <ti/datapath/dpif/dpif_ddm.h>
 
 #include <ti/demo/xwr18xx/mmw/include/mmw_config.h>
 #include <ti/demo/xwr18xx/mmw/mss/mmw_lvds_stream.h>
@@ -467,7 +468,16 @@ typedef struct MmwDemo_MSS_MCB_t
 
     /*! @brief Flag indicating if @ref calibCfg is pending processing. */
     uint8_t isCalibCfgPending : 1;
+
+    /*! @brief Number of Doppler sub-bands for DDM-MIMO; 0 disables DDM (stock TDM). */
+    uint8_t ddmNumBands;
+
+    /*! @brief True while the per-chirp TX phase shifters are enabled in the RF front end. */
+    bool isDdmPhaseShifterEnabled;
 } MmwDemo_MSS_MCB;
+
+/*! @brief Phase shifter resolution: 6 bits, 1 LSB = 360/64 degrees. */
+#define MMWDEMO_DDM_PHASE_STEPS     64U
 
 /**************************************************************************
  *************************** Extern Definitions ***************************

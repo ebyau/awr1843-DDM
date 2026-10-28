@@ -675,6 +675,72 @@ exit:
 /**
  *  @b Description
  *  @n
+ *      Sets the antenna parameters for DDM-MIMO. Every chirp of the frame must
+ *      enable the same contiguous set of TX antennas starting at TX0 (the phase
+ *      codes are assigned per TX index), and there must be fewer TX than
+ *      Doppler sub-bands. The radar cube has SIMO layout: one TX block of
+ *      numRxAntennas channels; the TX antennas are separated in Doppler.
+ *
+ *  @param[in,out]  outParams               Pointer to parameters generated after parsing configuration
+ *  @param[in,out]  pFoundValidProfile      Valid profile flag; cleared if the chirps do not match DDM
+ *  @param[in]      frameTotalChirps        Number of chirps per frame loop
+ *  @param[in]      validChirpTxEnBits      TX enable bits of each chirp
+ *
+ *  \ingroup MMWDEMO_RFPARSER_INTERNAL_FUNCTION
+ *
+ *  @retval
+ *      Success     0
+ *  @retval
+ *      Fail        <0, one of error codes @ref MMWDEMO_RFPARSER_ERROR_CODE
+ */
+static int32_t MmwDemo_RFParser_setDdmParams
+(
+    MmwDemo_RFParserOutParams  *outParams,
+    bool                       *pFoundValidProfile,
+    int16_t                     frameTotalChirps,
+    const uint16_t             *validChirpTxEnBits
+)
+{
+    uint16_t    txEn = validChirpTxEnBits[0];
+    uint8_t     numTx = 0U;
+    int16_t     chirpIdx;
+
+    if (*pFoundValidProfile == false)
+    {
+        return 0;
+    }
+
+    for (chirpIdx = 1; chirpIdx < frameTotalChirps; chirpIdx++)
+    {
+        if (validChirpTxEnBits[chirpIdx] != txEn)
+        {
+            *pFoundValidProfile = false;
+            return 0;
+        }
+    }
+
+    while ((numTx < SYS_COMMON_NUM_TX_ANTENNAS) && ((txEn & (1U << numTx)) != 0U))
+    {
+        outParams->txAntOrder[numTx] = numTx;
+        numTx++;
+    }
+    if ((txEn != ((1U << numTx) - 1U)) || (numTx < 2U) || (numTx >= outParams->ddmNumBands))
+    {
+        return MMWDEMO_RFPARSER_EINVAL_NUM_TX_ANTENNAS;
+    }
+
+    outParams->ddmNumTx                     = numTx;
+    outParams->numTxAntennas                = 1U;
+    outParams->numVirtualAntAzim            = outParams->numRxAntennas;
+    outParams->numVirtualAntElev            = 0U;
+    outParams->numVirtualAntennas           = outParams->numRxAntennas;
+    outParams->validProfileHasOneTxPerChirp = 1U;
+    return 0;
+}
+
+/**
+ *  @b Description
+ *  @n
  *      Helper function that parses Profile, Chirp and Frame config and extracts parameters
  *      needed for processing chain configuration
  *
@@ -848,11 +914,22 @@ static int32_t MmwDemo_RFParser_parseCtrlConfig
         }
 
         /* now parse through all valid chirps, check if the profile is valid and then set the AoA related parameters */
-        retVal = MmwDemo_RFParser_setAoAParams(outParams,
-                                               &foundValidProfile,
-                                               frameTotalChirps,
-                                               validChirpTxEnBits,
-                                               bpmEnabled);
+        if (outParams->ddmNumBands != 0U)
+        {
+            retVal = MmwDemo_RFParser_setDdmParams(outParams,
+                                                   &foundValidProfile,
+                                                   frameTotalChirps,
+                                                   validChirpTxEnBits);
+        }
+        else
+        {
+            outParams->ddmNumTx = 0U;
+            retVal = MmwDemo_RFParser_setAoAParams(outParams,
+                                                   &foundValidProfile,
+                                                   frameTotalChirps,
+                                                   validChirpTxEnBits,
+                                                   bpmEnabled);
+        }
         if (retVal != 0)
         {
             goto exit;

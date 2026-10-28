@@ -587,6 +587,11 @@ typedef struct DPU_AoAProcHWA_StaticConfig_t
     /*! @brief  Wavelength over antenna spacing factor */
     float       lambdaOverDist;
 
+    /*! @brief  Number of DDM-MIMO Doppler sub-bands, 0 for TDM-MIMO. With DDM the
+     *          radar cube has SIMO layout (one TX block) and the Doppler FFT of
+     *          each object yields all @ref numTxAntennas copies, one per sub-band. */
+    uint8_t     ddmNumBands;
+
 } DPU_AoAProcHWA_StaticConfig;
 
 /**

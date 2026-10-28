@@ -407,6 +407,14 @@ typedef struct DPC_ObjectDetection_StaticCfg_t
     /*! @brief  Center frequency of the chirp */
     float       centerFreq;
 
+    /*! @brief  Number of DDM-MIMO Doppler sub-bands, 0 for TDM-MIMO. With DDM the
+     *          radar cube has SIMO layout: @ref numTxAntennas is 1 and
+     *          @ref numVirtualAntennas equals the number of RX antennas. */
+    uint8_t     ddmNumBands;
+
+    /*! @brief  Number of TX antennas separated by DDM, 0 for TDM-MIMO */
+    uint8_t     ddmNumTx;
+
 } DPC_ObjectDetection_StaticCfg;
 
 /*

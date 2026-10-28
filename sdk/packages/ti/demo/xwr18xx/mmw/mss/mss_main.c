@@ -1796,6 +1796,7 @@ static int32_t MmwDemo_dataPathConfig (void)
          *****************************************************************************/
 
         /* Parse the profile and chirp configs and get the valid number of TX Antennas */
+        RFparserOutParams.ddmNumBands = gMmwMssMCB.ddmNumBands;
         errCode = MmwDemo_RFParser_parseConfig(&RFparserOutParams, subFrameIndx,
                                          &gMmwMssMCB.cfg.openCfg, ptrCtrlCfg,
                                          &subFrameCfg->adcBufCfg,
@@ -1814,6 +1815,20 @@ static int32_t MmwDemo_dataPathConfig (void)
         if (errCode != 0)
         {
             System_printf ("Error: MmwDemo_RFParser_parseConfig [Error:%d]\n", errCode);
+            goto exit;
+        }
+
+        /* These options assume one TX per chirp: range bias / RX phase is measured
+         * per TX, and the chirp mean (clutter, DC signature) only cancels TX0 when
+         * the other TX are phase-coded. Calibrate in TDM mode. */
+        if ((RFparserOutParams.ddmNumTx != 0U) &&
+            ((gMmwMssMCB.objDetCommonCfg.preStartCommonCfg.measureRxChannelBiasCfg.enabled == 1) ||
+             (subFrameCfg->objDetDynCfg.dynCfg.staticClutterRemovalCfg.enabled == 1) ||
+             (subFrameCfg->objDetDynCfg.dynCfg.calibDcRangeSigCfg.enabled == 1)))
+        {
+            CLI_write ("Error: ddmCfg does not support measureRangeBiasAndRxChanPhase, "
+                       "clutterRemoval or calibDcRangeSig\n");
+            errCode = -1;
             goto exit;
         }
 
@@ -1888,6 +1903,8 @@ static int32_t MmwDemo_dataPathConfig (void)
             staticCfg->ADCBufData.dataSize = RFparserOutParams.numRxAntennas * RFparserOutParams.numAdcSamples * sizeof(cmplx16ImRe_t);
             staticCfg->dopplerStep = RFparserOutParams.dopplerStep;
             staticCfg->isValidProfileHasOneTxPerChirp = RFparserOutParams.validProfileHasOneTxPerChirp;
+            staticCfg->ddmNumBands = (RFparserOutParams.ddmNumTx != 0U) ? RFparserOutParams.ddmNumBands : 0U;
+            staticCfg->ddmNumTx = RFparserOutParams.ddmNumTx;
             staticCfg->numChirpsPerFrame = RFparserOutParams.numChirpsPerFrame;
             staticCfg->numDopplerBins = RFparserOutParams.numDopplerBins;
             staticCfg->numDopplerChirps = RFparserOutParams.numDopplerChirps;
@@ -1921,7 +1938,8 @@ static int32_t MmwDemo_dataPathConfig (void)
             {
                 staticCfg->rxAntOrder[idx] = RFparserOutParams.rxAntOrder[idx];
             }
-            for (idx = 0; idx < RFparserOutParams.numTxAntennas; idx++)
+            /* DDM: the cube has one TX block but AoA reads ddmNumTx entries */
+            for (idx = 0; idx < MAX(RFparserOutParams.numTxAntennas, RFparserOutParams.ddmNumTx); idx++)
             {
                 staticCfg->txAntOrder[idx] = RFparserOutParams.txAntOrder[idx];
             }
@@ -3102,6 +3120,101 @@ int32_t MmwDemo_openSensor(bool isFirstTimeOpen)
 /**
  *  @b Description
  *  @n
+ *      Enables or disables the per-chirp TX phase shifters used by DDM-MIMO.
+ *      Must be issued before the profile and chirp configuration.
+ *
+ *  @param[in] enable
+ *      true to enable the phase shifters, false to restore stock TDM behavior
+ *
+ *  @retval
+ *      Success     - 0
+ *  @retval
+ *      Error       - <0
+ */
+static int32_t MmwDemo_ddmSetPhaseShifter(bool enable)
+{
+    rlRfMiscConf_t  miscCfg;
+    int32_t         retVal;
+
+    memset ((void *)&miscCfg, 0, sizeof(miscCfg));
+    miscCfg.miscCtl = enable ? 1U : 0U; /* b0: PERCHIRP_PHASESHIFTER_EN */
+
+    retVal = rlRfSetMiscConfig (RL_DEVICE_MAP_INTERNAL_BSS, &miscCfg);
+    if (retVal != 0)
+    {
+        CLI_write ("Error: rlRfSetMiscConfig retVal=%d\n", retVal);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ *  @b Description
+ *  @n
+ *      Phase shifter setting for TX k on chirp n of the DDM-MIMO loop:
+ *      -n * k * 360 / numBands degrees. The IF signal carries the negative of the
+ *      programmed phase (measured on the AWR1843AOP), so TX k advances by
+ *      +k * 360 / numBands per chirp, which places it in Doppler sub-band k and
+ *      leaves the last sub-band empty.
+ *
+ *  @retval
+ *      Phase shifter register value (6-bit phase in bits [7:2])
+ */
+static rlUInt8_t MmwDemo_ddmPhaseShift(uint32_t tx, uint32_t chirp, uint32_t bandStep)
+{
+    uint32_t phase = (tx * chirp * bandStep) % MMWDEMO_DDM_PHASE_STEPS;
+
+    return (rlUInt8_t)(((MMWDEMO_DDM_PHASE_STEPS - phase) % MMWDEMO_DDM_PHASE_STEPS) << 2U);
+}
+
+/**
+ *  @b Description
+ *  @n
+ *      Programs the DDM-MIMO phase ramp so that TX k occupies Doppler sub-band k.
+ *      Requires a legacy frame with exactly one chirp definition per sub-band.
+ *
+ *  @retval
+ *      Success     - 0
+ *  @retval
+ *      Error       - <0
+ */
+static int32_t MmwDemo_ddmConfigPhaseShift(void)
+{
+    rlRfPhaseShiftCfg_t phaseCfg[DPIF_DDM_MAX_BANDS];
+    const rlFrameCfg_t  *frameCfg = &gMmwMssMCB.cfg.ctrlCfg.u.frameCfg.frameCfg;
+    uint32_t            numBands = gMmwMssMCB.ddmNumBands;
+    uint32_t            bandStep = MMWDEMO_DDM_PHASE_STEPS / numBands;
+    uint32_t            chirp;
+    int32_t             retVal;
+
+    if ((gMmwMssMCB.cfg.ctrlCfg.dfeDataOutputMode != MMWave_DFEDataOutputMode_FRAME) ||
+        (((uint32_t)frameCfg->chirpEndIdx - frameCfg->chirpStartIdx + 1U) != numBands))
+    {
+        CLI_write ("Error: DDM needs frameCfg with %d chirps per loop\n", (int32_t)numBands);
+        return -1;
+    }
+
+    memset ((void *)phaseCfg, 0, sizeof(phaseCfg));
+    for (chirp = 0U; chirp < numBands; chirp++)
+    {
+        phaseCfg[chirp].chirpStartIdx = (rlUInt16_t)(frameCfg->chirpStartIdx + chirp);
+        phaseCfg[chirp].chirpEndIdx   = phaseCfg[chirp].chirpStartIdx;
+        phaseCfg[chirp].tx1PhaseShift = MmwDemo_ddmPhaseShift(1U, chirp, bandStep);
+        phaseCfg[chirp].tx2PhaseShift = MmwDemo_ddmPhaseShift(2U, chirp, bandStep);
+    }
+
+    retVal = rlRfSetPhaseShiftConfig (RL_DEVICE_MAP_INTERNAL_BSS, (rlUInt16_t)numBands, phaseCfg);
+    if (retVal != 0)
+    {
+        CLI_write ("Error: rlRfSetPhaseShiftConfig retVal=%d\n", retVal);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ *  @b Description
+ *  @n
  *      MMW demo helper Function to configure sensor. User need to fill gMmwMssMCB.cfg.ctrlCfg and
  *      add profiles/chirp to mmWave before calling this function
  *
@@ -3114,6 +3227,17 @@ int32_t MmwDemo_configSensor(void)
 {
     int32_t     errCode = 0;
 
+    /* Phase shifters are only touched when DDM is or was enabled, so stock TDM
+     * configurations send exactly the stock command sequence. */
+    if ((gMmwMssMCB.ddmNumBands != 0U) || gMmwMssMCB.isDdmPhaseShifterEnabled)
+    {
+        if (MmwDemo_ddmSetPhaseShifter(gMmwMssMCB.ddmNumBands != 0U) < 0)
+        {
+            return -1;
+        }
+        gMmwMssMCB.isDdmPhaseShifterEnabled = (gMmwMssMCB.ddmNumBands != 0U);
+    }
+
     /* Configure the mmWave module: */
     if (MMWave_config (gMmwMssMCB.ctrlHandle, &gMmwMssMCB.cfg.ctrlCfg, &errCode) < 0)
     {
@@ -3123,8 +3247,12 @@ int32_t MmwDemo_configSensor(void)
 
         /* Error: Report the error */
         MMWave_decodeError (errCode, &errorLevel, &mmWaveErrorCode, &subsysErrorCode);
-        System_printf ("Error: mmWave Config failed [Error code: %d Subsystem: %d]\n",
-                        mmWaveErrorCode, subsysErrorCode);
+        CLI_write ("Error: mmWave Config failed [Error code: %d Subsystem: %d]\n",
+                   mmWaveErrorCode, subsysErrorCode);
+    }
+    else if ((gMmwMssMCB.ddmNumBands != 0U) && (MmwDemo_ddmConfigPhaseShift() < 0))
+    {
+        errCode = -1;
     }
     else
     {

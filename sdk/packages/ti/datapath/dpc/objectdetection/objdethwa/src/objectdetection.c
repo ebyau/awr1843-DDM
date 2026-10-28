@@ -94,6 +94,7 @@
 /* Obj Det instance etc */
 #include <ti/datapath/dpc/objectdetection/objdethwa/include/objectdetectioninternal.h>
 #include <ti/datapath/dpc/objectdetection/objdethwa/objectdetection.h>
+#include <ti/datapath/dpif/dpif_ddm.h>
 
 #ifdef DBG_DPC_OBJDET
 ObjDetObj     *gObjDetObj;
@@ -730,6 +731,21 @@ static uint32_t DPC_ObjDet_GenDopplerWindow(DPU_DopplerProcHWA_Config *cfg)
 /**
  *  @b Description
  *  @n
+ *      Number of TX antennas in the virtual array. With DDM the radar cube holds a
+ *      single TX block, but the TX copies are separated in Doppler for AoA.
+ *
+ *  @param[in]  staticCfg Pointer to static configuration
+ *
+ *  @retval     Number of TX antennas seen by AoA
+ */
+static uint32_t DPC_ObjDet_numVirtualTx(const DPC_ObjectDetection_StaticCfg *staticCfg)
+{
+    return (staticCfg->ddmNumBands != 0U) ? staticCfg->ddmNumTx : staticCfg->numTxAntennas;
+}
+
+/**
+ *  @b Description
+ *  @n
  *      Extracts the sub-frame specific vector from the common (full vector for all antennnas)
  *      input vector of the range bias and rx phase compensation. Uses the antenna order of
  *      the sub-frame.
@@ -752,7 +768,7 @@ static void DPC_ObjDet_GetRxChPhaseComp(DPC_ObjectDetection_StaticCfg *staticCfg
     one.imag = 0;
     one.real = 0x7fff;
 
-    numTxAnt = staticCfg->numTxAntennas;
+    numTxAnt = DPC_ObjDet_numVirtualTx(staticCfg);
     numRxAnt = staticCfg->ADCBufData.dataProperty.numRxAntennas;
     txAntOrder = staticCfg->txAntOrder;
     rxAntOrder = staticCfg->rxAntOrder;
@@ -800,7 +816,7 @@ static void DPC_ObjDet_GetAntGeometryDef(DPC_ObjectDetection_StaticCfg *staticCf
     uint32_t tx, rx, numTxAnt, numRxAnt;
     uint8_t *txAntOrder, *rxAntOrder;
 
-    numTxAnt = staticCfg->numTxAntennas;
+    numTxAnt = DPC_ObjDet_numVirtualTx(staticCfg);
     numRxAnt = staticCfg->ADCBufData.dataProperty.numRxAntennas;
     txAntOrder = staticCfg->txAntOrder;
     rxAntOrder = staticCfg->rxAntOrder;
@@ -905,6 +921,16 @@ int32_t DPC_ObjectDetection_execute
     if (retVal != 0)
     {
         goto exit;
+    }
+
+    /* DDM: fold the Doppler sub-bands into the CFAR detection matrix */
+    if (subFrmObj->staticCfg.ddmNumBands != 0U)
+    {
+        DPIF_ddmFoldDetMatrix((uint16_t *) subFrmObj->dpuCfg.dopplerCfg.hwRes.detMatrix.data,
+                              (uint16_t *) subFrmObj->dpuCfg.cfarCfg.res.detMatrix.data,
+                              subFrmObj->staticCfg.numRangeBins,
+                              subFrmObj->staticCfg.numDopplerBins / subFrmObj->staticCfg.ddmNumBands,
+                              mathUtils_floorLog2(subFrmObj->staticCfg.ddmNumBands));
     }
 
     /* Procedure for range bias measurement and Rx channels gain/phase offset measurement */
@@ -1760,7 +1786,7 @@ static int32_t DPC_ObjDet_CFARCAconfig(DPU_CFARCAProcHWA_Handle dpuHandle,
 
     /* static config */
     cfarCfg.staticCfg.log2NumDopplerBins = log2NumDopplerBins;
-    cfarCfg.staticCfg.numDopplerBins     = staticCfg->numDopplerBins;
+    cfarCfg.staticCfg.numDopplerBins     = 1U << log2NumDopplerBins;
     cfarCfg.staticCfg.numRangeBins       = staticCfg->numRangeBins;
     cfarCfg.staticCfg.rangeStep          = staticCfg->rangeStep;
     cfarCfg.staticCfg.dopplerStep        = staticCfg->dopplerStep;
@@ -1805,9 +1831,9 @@ static int32_t DPC_ObjDet_CFARCAconfig(DPU_CFARCAProcHWA_Handle dpuHandle,
                                 sizeof(DPU_CFARCAProcHWA_CfarDetOutput);
 
     hwRes->cfarDopplerDetOutBitMaskSize = (staticCfg->numRangeBins *
-        staticCfg->numDopplerBins) / 32;
+        cfarCfg.staticCfg.numDopplerBins) / 32;
     /* Avoid cfarDopplerDetOutBitMaskSize to round down if (numRangeBins * numDopplerBins) is not a multiple of 32 */
-    if(0 != ((staticCfg->numRangeBins * staticCfg->numDopplerBins) % 32))
+    if(0 != ((staticCfg->numRangeBins * cfarCfg.staticCfg.numDopplerBins) % 32))
     {
     	hwRes->cfarDopplerDetOutBitMaskSize += 1U;
     }
@@ -1936,7 +1962,7 @@ static int32_t DPC_ObjDet_AoAconfig(DPU_AoAProcHWA_Handle dpuHandle,
     aoaCfg.staticCfg.numRxAntennas      = staticCfg->ADCBufData.dataProperty.numRxAntennas;
     aoaCfg.staticCfg.dopplerStep        = staticCfg->dopplerStep;
     aoaCfg.staticCfg.rangeStep          = staticCfg->rangeStep;
-    aoaCfg.staticCfg.numTxAntennas      = staticCfg->numTxAntennas;
+    aoaCfg.staticCfg.numTxAntennas      = (uint8_t) DPC_ObjDet_numVirtualTx(staticCfg);
     
     if(gAntennaSpacing<0)
     {
@@ -1948,7 +1974,8 @@ static int32_t DPC_ObjDet_AoAconfig(DPU_AoAProcHWA_Handle dpuHandle,
     }
 
 #if defined(USE_2D_AOA_DPU)
-    aoaCfg.staticCfg.numVirtualAnt  = staticCfg->numVirtualAntennas;
+    aoaCfg.staticCfg.numVirtualAnt  = aoaCfg.staticCfg.numTxAntennas * aoaCfg.staticCfg.numRxAntennas;
+    aoaCfg.staticCfg.ddmNumBands    = staticCfg->ddmNumBands;
 #else
     aoaCfg.staticCfg.numVirtualAntAzim  = staticCfg->numVirtualAntAzim;
     aoaCfg.staticCfg.numVirtualAntElev  = staticCfg->numVirtualAntElev;
@@ -2026,7 +2053,7 @@ static int32_t DPC_ObjDet_AoAconfig(DPU_AoAProcHWA_Handle dpuHandle,
     if(aoaCfg.dynCfg.prepareRangeAzimuthHeatMap)
     {
 #if defined(USE_2D_AOA_DPU)
-        res->azimuthStaticHeatMapSize = staticCfg->numRangeBins * staticCfg->numVirtualAntennas;
+        res->azimuthStaticHeatMapSize = staticCfg->numRangeBins * aoaCfg.staticCfg.numVirtualAnt;
 #else
         res->azimuthStaticHeatMapSize = staticCfg->numRangeBins * staticCfg->numVirtualAntAzim;
 #endif
@@ -2181,6 +2208,8 @@ static int32_t DPC_ObjDet_preStartConfig(SubFrameObj *obj,
     int32_t retVal = 0;
     DPIF_RadarCube radarCube;
     DPIF_DetMatrix detMatrix;
+    DPIF_DetMatrix cfarDetMatrix;
+    uint8_t        cfarLog2NumDopplerBins;
     uint32_t hwaWindowOffset;
     uint32_t staticClutterCoreLocalsratchUsage, rangeCoreLocalRamScratchUsage,
              dopplerCoreLocalRamScratchUsage, cfarCoreLocalRamScratchUsage;
@@ -2201,6 +2230,15 @@ static int32_t DPC_ObjDet_preStartConfig(SubFrameObj *obj,
 
     /* derived config */
     obj->log2NumDopplerBins = mathUtils_floorLog2(staticCfg->numDopplerBins);
+
+#if !defined(USE_2D_AOA_DPU)
+    /* DDM sub-band separation is implemented in the 2D AoA DPU only */
+    if (staticCfg->ddmNumBands != 0U)
+    {
+        retVal = DPC_OBJECTDETECTION_EINVAL;
+        goto exit;
+    }
+#endif
 
     DPC_ObjDet_MemPoolReset(L3ramObj);
     DPC_ObjDet_MemPoolReset(CoreLocalRamObj);
@@ -2231,6 +2269,22 @@ static int32_t DPC_ObjDet_preStartConfig(SubFrameObj *obj,
         goto exit;
     }
     detMatrix.datafmt = DPIF_DETMATRIX_FORMAT_1;
+
+    /* L3 - CFAR detection matrix: with DDM, the Doppler sub-bands folded into one */
+    cfarDetMatrix = detMatrix;
+    cfarLog2NumDopplerBins = obj->log2NumDopplerBins;
+    if (staticCfg->ddmNumBands != 0U)
+    {
+        cfarLog2NumDopplerBins -= (uint8_t) mathUtils_floorLog2(staticCfg->ddmNumBands);
+        cfarDetMatrix.dataSize = detMatrix.dataSize / staticCfg->ddmNumBands;
+        cfarDetMatrix.data = DPC_ObjDet_MemPoolAlloc(L3ramObj, cfarDetMatrix.dataSize,
+                                                     DPC_OBJDET_DET_MATRIX_DATABUF_BYTE_ALIGNMENT);
+        if (cfarDetMatrix.data == NULL)
+        {
+            retVal = DPC_OBJECTDETECTION_ENOMEM__L3_RAM_DET_MATRIX;
+            goto exit;
+        }
+    }
 
     /* Core Local - CFAR output list */
     cfarRngDopSnrListSize = DPC_OBJDET_MAX_NUM_OBJECTS;
@@ -2274,9 +2328,9 @@ static int32_t DPC_ObjDet_preStartConfig(SubFrameObj *obj,
     DPC_ObjDet_MemPoolSet(CoreLocalRamObj, CoreLocalScratchStartPoolAddr);
 
     retVal = DPC_ObjDet_CFARCAconfig(obj->dpuCFARCAObj, &obj->staticCfg,
-                 obj->log2NumDopplerBins, &obj->dynCfg,
+                 cfarLog2NumDopplerBins, &obj->dynCfg,
                  edmaHandle[DPC_OBJDET_DPU_CFARCA_PROC_EDMA_INST_ID],
-                 &detMatrix,
+                 &cfarDetMatrix,
                  cfarRngDopSnrList,
                  cfarRngDopSnrListSize,
                  CoreLocalRamObj,

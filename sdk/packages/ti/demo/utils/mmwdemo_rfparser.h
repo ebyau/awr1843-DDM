@@ -231,6 +231,14 @@ typedef struct MmwDemo_RFParserOutParams_t
     /*! @brief  Center frequency of the chirp */
     float       centerFreq;
 
+    /*! @brief  Input: number of DDM-MIMO Doppler sub-bands, 0 for TDM-MIMO.
+     *          Set by the caller before parsing. */
+    uint8_t     ddmNumBands;
+
+    /*! @brief  Number of TX antennas separated by DDM, 0 for TDM-MIMO. The
+     *          radar cube then holds a single TX block (SIMO layout). */
+    uint8_t     ddmNumTx;
+
 } MmwDemo_RFParserOutParams;
 
 

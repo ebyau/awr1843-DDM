@@ -88,6 +88,7 @@ static int32_t MmwDemo_CLIChirpQualitySigImgMonCfg (int32_t argc, char* argv[]);
 static int32_t MmwDemo_CLIAnalogMonitorCfg (int32_t argc, char* argv[]);
 static int32_t MmwDemo_CLILvdsStreamCfg (int32_t argc, char* argv[]);
 static int32_t MmwDemo_CLIConfigDataPort (int32_t argc, char* argv[]);
+static int32_t MmwDemo_CLIDdmCfg (int32_t argc, char* argv[]);
 
 /**************************************************************************
  *************************** Extern Definitions *******************************
@@ -252,6 +253,7 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
         retVal = MmwDemo_openSensor(true);
         if(retVal != 0)
         {
+            CLI_write ("Error: MmwDemo_openSensor failed [%d]\n", retVal);
             return -1;
         }
         gMmwMssMCB.sensorState = MmwDemo_SensorState_OPENED;    
@@ -302,12 +304,14 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
         retVal = MmwDemo_configSensor();
         if(retVal != 0)
         {
+            CLI_write ("Error: MmwDemo_configSensor failed [%d]\n", retVal);
             return -1;
         }
     }
     retVal = MmwDemo_startSensor();
     if(retVal != 0)
     {
+        CLI_write ("Error: MmwDemo_startSensor failed [%d]\n", retVal);
         return -1;
     }
 
@@ -335,6 +339,10 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
  */
 static int32_t MmwDemo_CLISensorStop (int32_t argc, char* argv[])
 {
+    /* flushCfg is handled by the CLI library, so DDM is cleared here instead:
+     * every configuration that wants DDM must issue ddmCfg again. */
+    gMmwMssMCB.ddmNumBands = 0U;
+
     if ((gMmwMssMCB.sensorState == MmwDemo_SensorState_STOPPED) ||
         (gMmwMssMCB.sensorState == MmwDemo_SensorState_INIT) ||
         (gMmwMssMCB.sensorState == MmwDemo_SensorState_OPENED))
@@ -1296,6 +1304,55 @@ static int32_t MmwDemo_CLICalibDataSaveRestore(int32_t argc, char* argv[])
 /**
  *  @b Description
  *  @n
+ *      This is the CLI Handler for the DDM-MIMO configuration. All TX transmit
+ *      on every chirp and TX k is phase-coded into Doppler sub-band k; the last
+ *      sub-band stays empty for disambiguation. numBands = 0 disables DDM.
+ *
+ *  @param[in] argc
+ *      Number of arguments
+ *  @param[in] argv
+ *      Arguments
+ *
+ *  @retval
+ *      Success -   0
+ *  @retval
+ *      Error   -   <0
+ */
+static int32_t MmwDemo_CLIDdmCfg (int32_t argc, char* argv[])
+{
+    uint32_t numBands;
+
+    if (argc != 2)
+    {
+        CLI_write ("Error: Invalid usage of the CLI command\n");
+        return -1;
+    }
+
+    if (gMmwMssMCB.sensorState == MmwDemo_SensorState_STARTED)
+    {
+        CLI_write ("Ignored: This command is not allowed after sensor has started\n");
+        return 0;
+    }
+
+    /* At least one empty band is needed to disambiguate the TX copies, and the
+     * per-chirp phase step must be a whole number of phase shifter LSBs. */
+    numBands = (uint32_t) atoi (argv[1]);
+    if ((numBands != 0U) &&
+        ((numBands <= SYS_COMMON_NUM_TX_ANTENNAS) || (numBands > DPIF_DDM_MAX_BANDS) ||
+         ((MMWDEMO_DDM_PHASE_STEPS % numBands) != 0U)))
+    {
+        CLI_write ("Error: numBands must be 0, or a divisor of 64 in (%d, %d]\n",
+                   (int32_t)SYS_COMMON_NUM_TX_ANTENNAS, (int32_t)DPIF_DDM_MAX_BANDS);
+        return -1;
+    }
+
+    gMmwMssMCB.ddmNumBands = (uint8_t) numBands;
+    return 0;
+}
+
+/**
+ *  @b Description
+ *  @n
  *      This is the CLI Execution Task
  *
  *  @retval
@@ -1435,6 +1492,11 @@ void MmwDemo_CLIInit (uint8_t taskPriority)
     cliCfg.tableEntry[cnt].cmd            = "calibData";
     cliCfg.tableEntry[cnt].helpString    = "<save enable> <restore enable> <Flash offset>";
     cliCfg.tableEntry[cnt].cmdHandlerFxn  = MmwDemo_CLICalibDataSaveRestore;
+    cnt++;
+
+    cliCfg.tableEntry[cnt].cmd            = "ddmCfg";
+    cliCfg.tableEntry[cnt].helpString     = "<numBands (0: disabled)>";
+    cliCfg.tableEntry[cnt].cmdHandlerFxn  = MmwDemo_CLIDdmCfg;
     cnt++;
 
     /* Open the CLI: */

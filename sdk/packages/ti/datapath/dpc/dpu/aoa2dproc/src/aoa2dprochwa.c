@@ -60,6 +60,13 @@
 #include <ti/datapath/dpc/dpu/aoa2dproc/include/aoa2dprochwa_internal.h>
 #include <ti/utils/cycleprofiler/cycle_profiler.h>
 #include <ti/utils/mathutils/mathutils.h>
+#include <ti/datapath/dpif/dpif_ddm.h>
+
+/* TX blocks per chirp loop in the radar cube; DDM cubes have SIMO layout. */
+#define AOAHWA_NUM_CUBE_TX(params)  (((params)->ddmNumBands != 0U) ? 1U : (uint32_t)(params)->numTxAntennas)
+
+/* Antennas per Doppler bin of the 2D-FFT output (cube TX blocks x RX antennas). */
+#define AOAHWA_NUM_CUBE_ANT(params) (AOAHWA_NUM_CUBE_TX(params) * (params)->numRxAntennas)
 
 //#define DBG_AOA_HWA_OBJ_DPU
 #ifdef DBG_AOA_HWA_OBJ_DPU
@@ -611,7 +618,7 @@ static int32_t AoAProcHWA_config_EDMA
     config.paramSetConfig.bCount = 0;
     config.paramSetConfig.cCount = 0;
 
-    numBlocks = DPParams->numVirtualAnt * DPParams->numDopplerChirps;
+    numBlocks = AOAHWA_NUM_CUBE_ANT(DPParams) * DPParams->numDopplerChirps;
     for (pingPongIdx = 0; pingPongIdx < 2; pingPongIdx++)
     {
     
@@ -679,7 +686,7 @@ static int32_t AoAProcHWA_config_EDMA
         /* Param set: 2D-FFT Signature In */
         /**********************************/
         HWA_getDMAconfig(hwaHandle,
-                         res->hwaCfg.paramSetStartIdx + (pingPongIdx * DPParams->numTxAntennas),
+                         res->hwaCfg.paramSetStartIdx + (pingPongIdx * AOAHWA_NUM_CUBE_TX(DPParams)),
                          &dmaConfig);
 
         paramCfg.paramSetConfig.sourceAddress = SOC_translateAddress(dmaConfig.srcAddr,
@@ -751,7 +758,7 @@ static int32_t AoAProcHWA_config_EDMA
         /* Param set: 3D-FFT Signature In */
         /**********************************/
         uint32_t numDummyParams = 1; /* One Dummy param set is needed because of HWA register read issue */
-        uint32_t num2DFFTParamSets = DPParams->numTxAntennas;
+        uint32_t num2DFFTParamSets = AOAHWA_NUM_CUBE_TX(DPParams);
         uint32_t num3DFFTParamSets = 2 + 1 + numDummyParams;
         uint32_t paramOffset = 0;
 
@@ -844,13 +851,24 @@ static int32_t AoAProcHWA_config_EDMA
         paramCfg.paramSetConfig.destinationAddress = SOC_translateAddress(dstOut2DFFTBuffAddr[pingPongIdx],
                                                    SOC_TranslateAddr_Dir_TO_EDMA,
                                                    NULL);
-        paramCfg.paramSetConfig.aCount = (DPParams->numVirtualAnt) * sizeof(cmplx16ImRe_t);
-        paramCfg.paramSetConfig.bCount = 1;
+        /* One Doppler bin of every antenna; with DDM, that bin in each sub-band */
+        paramCfg.paramSetConfig.transferType = (uint8_t)EDMA3_SYNC_AB;
+        paramCfg.paramSetConfig.aCount = AOAHWA_NUM_CUBE_ANT(DPParams) * sizeof(cmplx16ImRe_t);
+        paramCfg.paramSetConfig.bCount = (DPParams->ddmNumBands != 0U) ? DPParams->ddmNumBands : 1U;
         paramCfg.paramSetConfig.cCount = 1;
         paramCfg.paramSetConfig.bCountReload = 0;
 
-        paramCfg.paramSetConfig.sourceBindex = 0;
-        paramCfg.paramSetConfig.destinationBindex = 0;
+        if (DPParams->ddmNumBands != 0U)
+        {
+            paramCfg.paramSetConfig.sourceBindex = (DPParams->numDopplerBins / DPParams->ddmNumBands) *
+                                                   paramCfg.paramSetConfig.aCount;
+            paramCfg.paramSetConfig.destinationBindex = paramCfg.paramSetConfig.aCount;
+        }
+        else
+        {
+            paramCfg.paramSetConfig.sourceBindex = 0;
+            paramCfg.paramSetConfig.destinationBindex = 0;
+        }
 
         paramCfg.paramSetConfig.sourceCindex = 0;
         paramCfg.paramSetConfig.destinationCindex = 0;
@@ -866,6 +884,7 @@ static int32_t AoAProcHWA_config_EDMA
         {
             goto exit;
         }
+        paramCfg.paramSetConfig.transferType = (uint8_t)EDMA3_SYNC_A;
 
         /***********************************************************************************/
         /* EDMA Out: CFAR Detection List, or the list of maximum peaks (one per elevation) */
@@ -949,7 +968,7 @@ static int32_t AoAProcHWA_config_EDMA
         /* while the its state machine is running                  */
         /***********************************************************/
         numDummyParams = 1; /* This is needed to mitigate HWA read register issue */
-        num2DFFTParamSets = DPParams->numTxAntennas;
+        num2DFFTParamSets = AOAHWA_NUM_CUBE_TX(DPParams);
         num3DFFTParamSets = 2 + 1 + numDummyParams;
         paramOffset = num3DFFTParamSets - numDummyParams;
 
@@ -1230,7 +1249,7 @@ int32_t AoAProcHWA_cfgAndTrigger_EDMA_2DFFT(AOAHwaObj *aoaHwaObj,
     DPU_AoAProcHWA_HW_Resources *res = &aoaHwaObj->res;
     DPU_AoAProcHWA_StaticConfig *DPParams = &aoaHwaObj->params;
     cmplx16ImRe_t *radarCubeBase = (cmplx16ImRe_t *)res->radarCube.data;
-    uint32_t dopplerBinSize = sizeof(cmplx16ImRe_t) * (DPParams->numVirtualAnt);
+    uint32_t dopplerBinSize = sizeof(cmplx16ImRe_t) * AOAHWA_NUM_CUBE_ANT(DPParams);
     uint32_t srcBuffAddr;
 
     /* EDMA In Source address in radar cube */
@@ -1343,8 +1362,8 @@ static int32_t AoAProcHWA_config_HWA
     uint32_t        numDopplerChirps = DPParams->numDopplerChirps;
     uint32_t        numDopplerBins = DPParams->numDopplerBins;
     uint8_t         numRxAnt = DPParams->numRxAntennas;
-    uint8_t         numTxAnt = DPParams->numTxAntennas;
-    uint8_t         numVirtualAnt = DPParams->numVirtualAnt;
+    uint8_t         numTxAnt = (uint8_t) AOAHWA_NUM_CUBE_TX(DPParams);
+    uint8_t         numVirtualAnt = (uint8_t) AOAHWA_NUM_CUBE_ANT(DPParams);
 
     uint16_t        hwaMemAzimSource[2];
     uint16_t        hwaMemAzimDest[2];
@@ -2211,6 +2230,52 @@ static float AoAProcHWA_3DFFTGainCalc(uint32_t *srcPtr, uint32_t numAnt)
 }
 
 /**
+ *  @b Description
+ *  @n
+ *      DDM-MIMO: reorders the 2D-FFT samples of one object from sub-band order
+ *      [band][rx] into virtual-array order [tx][rx], and replaces the object's
+ *      folded Doppler index with the Doppler bin of the TX0 copy.
+ *
+ *  @param[in]      params  AoA static configuration
+ *  @param[in,out]  buf     ddmNumBands x numRxAntennas samples in,
+ *                          numTxAntennas x numRxAntennas samples out
+ *  @param[in,out]  obj     Detected object
+ */
+static void AoAProcHWA_ddmVirtualArray
+(
+    const DPU_AoAProcHWA_StaticConfig *params,
+    cmplx16ImRe_t                     *buf,
+    DPIF_CFARDetList                  *obj
+)
+{
+    cmplx16ImRe_t   bands[DPIF_DDM_MAX_BANDS * SYS_COMMON_NUM_RX_CHANNEL];
+    float           bandPower[DPIF_DDM_MAX_BANDS];
+    uint32_t        numBands = params->ddmNumBands;
+    uint32_t        numRx = params->numRxAntennas;
+    uint32_t        band, rx, tx, tx0Band;
+
+    memcpy(bands, buf, numBands * numRx * sizeof(cmplx16ImRe_t));
+    for (band = 0U; band < numBands; band++)
+    {
+        bandPower[band] = 0.f;
+        for (rx = 0U; rx < numRx; rx++)
+        {
+            const cmplx16ImRe_t *x = &bands[band * numRx + rx];
+            bandPower[band] += ((float)x->real * x->real) + ((float)x->imag * x->imag);
+        }
+    }
+
+    tx0Band = DPIF_ddmTx0Band(bandPower, numBands);
+    for (tx = 0U; tx < params->numTxAntennas; tx++)
+    {
+        memcpy(&buf[tx * numRx], &bands[DPIF_ddmTxBand(tx0Band, tx, numBands) * numRx],
+               numRx * sizeof(cmplx16ImRe_t));
+    }
+    obj->dopplerIdx = (uint16_t) DPIF_ddmTxDopplerBin(obj->dopplerIdx, tx0Band, 0U,
+                                                      params->numDopplerBins / numBands, numBands);
+}
+
+/**
  *   @b Description
  *   @n
  *      Function performs Doppler compensation on antenna symbols,
@@ -2298,7 +2363,9 @@ static void AoAProcHWA_dopplerCompensation
     if(numTxAnt > 1)
     {
         /* transfer data corresponding to the remaining TDM chirps */
-        dopplerCompensationIdx = (dopplerSignIdx) / (float)numTxAnt;
+        /* DDM transmits all TX on the same chirp: no motion phase between TX copies */
+        dopplerCompensationIdx = (aoaHwaObj->params.ddmNumBands != 0U) ? 0.f :
+                                 (dopplerSignIdx) / (float)numTxAnt;
         Cos = cos(2*PI_*dopplerCompensationIdx/numDopplerBins);
         Sin = sin(2*PI_*dopplerCompensationIdx/numDopplerBins);
 
@@ -2911,6 +2978,18 @@ int32_t DPU_AoAProcHWA_config
         goto exit;
     }
 
+    /* DDM: the TX copies need distinct sub-bands plus an empty one, and the
+     * range-azimuth heat map assumes a TDM radar cube */
+    if ((aoaHwaCfg->staticCfg.ddmNumBands != 0U) &&
+        ((aoaHwaCfg->staticCfg.ddmNumBands > DPIF_DDM_MAX_BANDS) ||
+         (aoaHwaCfg->staticCfg.numTxAntennas >= aoaHwaCfg->staticCfg.ddmNumBands) ||
+         ((aoaHwaCfg->staticCfg.numDopplerBins % aoaHwaCfg->staticCfg.ddmNumBands) != 0U) ||
+         aoaHwaCfg->dynCfg.prepareRangeAzimuthHeatMap))
+    {
+        retVal = DPU_AOAPROCHWA_EINVAL;
+        goto exit;
+    }
+
     if (aoaHwaCfg->res.detObjOutMaxSize & 0x1)
     {
         retVal = DPU_AOAPROCHWA_EDETECTED_OBJECT_LIST_SIZE_ODD_NUMBER;
@@ -2974,8 +3053,8 @@ int32_t DPU_AoAProcHWA_config
     {
         aoaHwaObj->hwaDetectedPeaksList[i] = (DPU_AoAProcHWA_CfarDetOutput *) aoaHwaCfg->res.localScratchBuffer[i];
         aoaHwaObj->azimElevLocalBuf[i] = (uint32_t *) aoaHwaCfg->res.localScratchBuffer[i];
-        aoaHwaObj->azimElevLocal2DimAngleFFTInput[i] = &aoaHwaObj->azimElevLocalBuf[i][aoaHwaCfg->staticCfg.numTxAntennas *
-                                                                                   aoaHwaCfg->staticCfg.numRxAntennas];
+        aoaHwaObj->azimElevLocal2DimAngleFFTInput[i] = &aoaHwaObj->azimElevLocalBuf[i][
+            MAX(aoaHwaCfg->staticCfg.numTxAntennas, aoaHwaCfg->staticCfg.ddmNumBands) * aoaHwaCfg->staticCfg.numRxAntennas];
     }
 
     aoaHwaObj->edmaDstOut2DFFTBuffAddr[0] = (uint32_t) &aoaHwaObj->azimElevLocalBuf[0][0];
@@ -3132,7 +3211,7 @@ int32_t DPU_AoAProcHWA_process
 
         /* Configure Common HWA registers */
         uint32_t numDummyParams = 1; /* This is needed to mitigate HWA read register issue */
-        numParams = AOAHWA_NUM_PING_PONG_BUF*(DPParams->numTxAntennas + 2 + 1 + numDummyParams);
+        numParams = AOAHWA_NUM_PING_PONG_BUF*(AOAHWA_NUM_CUBE_TX(DPParams) + 2 + 1 + numDummyParams);
         retVal =  AoAProcHWA_config_HWA_common (hwaHandle,
                                                 numObjsIn/2, //numLoops,
                                                 res->hwaCfg.paramSetStartIdx, //paramStartIdx,
@@ -3190,6 +3269,13 @@ int32_t DPU_AoAProcHWA_process
                 {
                       goto exit;
                 }
+                if (DPParams->ddmNumBands != 0U)
+                {
+                    AoAProcHWA_ddmVirtualArray(DPParams,
+                                               (cmplx16ImRe_t *) aoaHwaObj->azimElevLocalBuf[pingPongIdx],
+                                               &res->cfarRngDopSnrList[detObjIdxProc + pingPongIdx]);
+                }
+
                 /* Rx channel gain/phase offset compensation */
                 AoAProcHWA_rxChanPhaseBiasCompensation(aoaHwaObj,
                                                     &aoaHwaObj->dynLocalCfg.compRxChanCfg.rxChPhaseComp[0],
