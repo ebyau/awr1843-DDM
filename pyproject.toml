@@ -8,6 +8,7 @@ dependencies = [
     "matplotlib>=3.8",
     "numpy>=1.26",
     "pyserial>=3.5",
+    "xwr>=0.5.1",
 ]
 
 [dependency-groups]

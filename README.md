@@ -99,6 +99,18 @@ uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg
 
 This opens the live range-Doppler map shown above (close the window to stop the radar).
 
+### 6. Capture raw data (optional)
+
+With a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card, the raw ADC samples can
+be recorded and decoded on the PC:
+
+```sh
+uv run python host/raw_capture.py host/profiles/ddm_aop_raw.cfg --frames 20 --out capture.npz
+uv run python host/ddm_raw.py capture.npz
+```
+
+See [raw data capture](docs/development.md#raw-data-capture) for the capture card setup.
+
 ## Documentation
 
 | Page | Contents |

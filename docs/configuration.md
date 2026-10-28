@@ -121,6 +121,7 @@ All are in `host/profiles/` and use DDM with 3 TX and 4 sub-bands.
 | `ddm_aop.cfg` | 256 (0.042 m, CFAR range window 0.25–15 m) | 100 ms | off | Point cloud, `mmw_host.py` |
 | `ddm_aop_rdmap.cfg` | 256 | 1 s | on | `rd_view.py`, `ddm_check.py` |
 | `ddm_phase2_aop.cfg` | 128 (CFAR range window 0.25–5 m) | 1 s | on | Shorter-range variant with a 32 KB heat map |
+| `ddm_aop_raw.cfg` | 256 | 100 ms | off | `ddm_aop.cfg` with raw ADC streaming to a DCA1000EVM (`lvdsStreamCfg -1 0 1 0`) and only the point cloud on the data port, for `raw_capture.py` |
 
 The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
 921600-baud data port, so profiles that enable it run at 1 frame per second.
