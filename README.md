@@ -30,8 +30,10 @@ awr1843aop_serial.ccxml  UniFlash target configuration (serial)
 sdk/                     mmWave SDK 03.06.02 packages, including the modified sources
 host/                    Python tools to configure the radar and read its output
   mmw_host.py              send a .cfg file and print a per-frame point-cloud summary
-  ddm_check.py             report signal level per Doppler sub-band (range-Doppler heat map)
+  rd_view.py               live range-Doppler heat map with the sub-bands marked
+  ddm_check.py             report signal level per Doppler sub-band
   profiles/                example DDM configurations
+pyproject.toml, uv.lock  Python dependencies for host/, managed with uv
 test/                    host unit tests (C, built with gcc)
 docs/                    design notes
 ```
@@ -77,10 +79,12 @@ git diff $(git rev-list --max-parents=0 HEAD) -- sdk
   ```
   sudo dpkg --add-architecture i386
   sudo apt update
-  sudo apt install libc6:i386 libstdc++6:i386 make mono-runtime gcc python3-serial python3-numpy
+  sudo apt install libc6:i386 libstdc++6:i386 make mono-runtime gcc
   ```
 
   The i386 libraries and Mono are needed by TI's image-packaging tools.
+- [uv](https://docs.astral.sh/uv/) for the Python host tools. `uv sync` in the repository root
+  creates the environment from `uv.lock`.
 - Serial port access: `sudo usermod -aG dialout $USER`, then log out and back in.
 - Stop ModemManager from probing the board's USB-UART bridge (Silicon Labs CP2105), which
   interferes with flashing:
@@ -133,15 +137,22 @@ The board appears as two serial ports:
 Send a configuration and print a summary of each frame:
 
 ```
-python3 host/mmw_host.py host/profiles/ddm_aop.cfg --frames 20
+uv run python host/mmw_host.py host/profiles/ddm_aop.cfg --frames 20
 ```
 
 Each line shows the frame number, the number of detected points, and the nearest target's
 position (m) and radial velocity (m/s). Use `--cli` and `--data` for other ports.
 
-To check the sub-band separation directly, enable the range-Doppler heat map in the
-configuration (`guiMonitor`) and run `host/ddm_check.py`. With DDM working, the sub-bands that
-hold TX copies show similar levels and the empty sub-band is far lower.
+To see the sub-bands, show the live range-Doppler map (close the window to stop the radar):
+
+```
+uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg
+```
+
+Each target appears once per TX at the same range, one sub-band apart, and one sub-band stays
+empty. The heat map is about 64 KB per frame, so this configuration runs at 1 frame per second.
+`--snapshot map.png` saves a single frame instead. `host/ddm_check.py` prints the level in each
+sub-band for the strongest range bin.
 
 ## Configuring DDM
 
@@ -178,7 +189,8 @@ If `sensorStart` fails, the command line prints the failing step and an error co
 ## Tests
 
 ```
-make -C test
+make -C test          # firmware math and parser (C)
+uv run ruff check     # lint the Python host tools
 ```
 
 - `ddm_test` simulates DDM chirps for 3 TX and 4 RX (the firmware's phase codes, window and
