@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Live range-Doppler heat map from the mmw demo.
 
 Shows the unfolded Doppler spectrum with the DDM sub-band boundaries marked, so

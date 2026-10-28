@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * Host unit test for the demo RF parser (mmwdemo_rfparser.c) with stubbed mmWave
  * control APIs: checks stock TDM-MIMO and DDM-MIMO chirp configurations against

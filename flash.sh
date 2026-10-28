@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Flash an image to the AWR1843AOPEVM over UART (board must be freshly
 # powered in SOP flashing mode). Usage: ./flash.sh [image.bin] [port]
 set -euo pipefail

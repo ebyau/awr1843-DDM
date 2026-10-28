@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Check DDM sub-band separation in the range-Doppler heatmap.
 
 Runs a DDM config, then, for the strongest range bin, reports the energy in each

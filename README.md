@@ -123,6 +123,8 @@ This opens the live range-Doppler map shown above (close the window to stop the 
 
 ## License
 
-The files under `sdk/` are TI mmWave SDK sources, © Texas Instruments, distributed under the
-terms stated in their file headers (a BSD-style license that requires the copyright notice to
-be kept in source and binary redistributions).
+The code written for this project is released under the [MIT License](LICENSE); those files
+carry an `SPDX-License-Identifier: MIT` line. The files under `sdk/` that come from the TI
+mmWave SDK, including the ones modified here, remain © Texas Instruments under the terms stated
+in their file headers (a BSD-style license that requires the copyright notice to be kept in
+source and binary redistributions).

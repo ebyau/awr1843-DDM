@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Configure the mmw demo over the CLI port and decode frames from the data port.
 
 Usage: uv run python host/mmw_host.py CONFIG.cfg [--frames N] [--cli PORT] [--data PORT]

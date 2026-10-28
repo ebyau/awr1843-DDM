@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Rebuild the modified datapath libraries and a demo image.
 # Usage: ./build.sh [aop|std]   (default aop; std = non-AOP antenna build)
 # Output: out/xwr18xx_mmw_<variant>demo.bin; full log: out/build.log

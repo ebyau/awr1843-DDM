@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Host unit tests for hardware-independent DDM code. Usage: make -C test
 SDK      := ../sdk/packages
 CFLAGS   := -std=gnu99 -O2 -Wall -Wextra -Werror -D_DEFAULT_SOURCE -I$(SDK)

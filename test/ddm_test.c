@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * Host unit test for dpif_ddm.h: simulates DDM chirps (3 TX, 4 RX, 4 sub-bands,
  * 128 chirps, firmware phase codes) and checks Doppler disambiguation and the

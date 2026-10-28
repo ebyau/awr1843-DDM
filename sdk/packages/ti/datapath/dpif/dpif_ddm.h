@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /**
  *   @file  dpif_ddm.h
  *
