@@ -10,7 +10,10 @@ Usage: python3 rd_view.py CONFIG.cfg [--bands 4] [--snapshot out.png]
 from __future__ import annotations
 
 import argparse
+import contextlib
+import queue
 import sys
+import threading
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -20,7 +23,7 @@ from matplotlib.axes import Axes
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.image import AxesImage
 
-from mmw_host import read_frame, send_config
+from mmw_host import Frame, FrameError, read_frame, send_config
 
 TLV_RANGE_DOPPLER = 5
 SPEED_OF_LIGHT = 3e8
@@ -88,6 +91,22 @@ def draw_axes(ax: Axes, db: np.ndarray, range_step: float, bands: int) -> AxesIm
     return image
 
 
+def read_frames(data: serial.Serial, latest: queue.Queue[Frame], stop: threading.Event) -> None:
+    """Read frames continuously, keeping only the newest, so the UART never overflows
+    while the plot redraws."""
+    while not stop.is_set():
+        try:
+            frame = read_frame(data)
+        except FrameError as err:
+            print(f"skipped corrupted frame: {err}", file=sys.stderr)
+            continue
+        except TimeoutError:
+            continue
+        with contextlib.suppress(queue.Empty):
+            latest.get_nowait()
+        latest.put(frame)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("config", type=Path)
@@ -100,14 +119,23 @@ def main() -> int:
     num_range_bins, range_step = range_axis(args.config)
     fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
     image: AxesImage | None = None
+    latest: queue.Queue[Frame] = queue.Queue(maxsize=1)
+    stop = threading.Event()
 
     with serial.Serial(args.cli, 115200, timeout=6) as cli, \
          serial.Serial(args.data, 921600, timeout=3) as data:
         send_config(cli, args.config)
         data.reset_input_buffer()
+        reader = threading.Thread(target=read_frames, args=(data, latest, stop), daemon=True)
+        reader.start()
         try:
-            while True:
-                frame = read_frame(data)
+            while args.snapshot is not None or plt.fignum_exists(fig.number):
+                try:
+                    frame = latest.get(timeout=0.05) if args.snapshot else latest.get_nowait()
+                except queue.Empty:
+                    if args.snapshot is None:
+                        plt.pause(0.05)
+                    continue
                 raw = frame.tlvs.get(TLV_RANGE_DOPPLER)
                 if raw is None:
                     raise RuntimeError("frame has no range-Doppler heat map; enable it in guiMonitor")
@@ -122,10 +150,10 @@ def main() -> int:
                     fig.savefig(args.snapshot, dpi=120)
                     print(f"Saved {args.snapshot}")
                     break
-                plt.pause(0.01)
-                if not plt.fignum_exists(fig.number):
-                    break
+                plt.pause(0.05)
         finally:
+            stop.set()
+            reader.join()
             cli.write(b"sensorStop\n")
     return 0
 

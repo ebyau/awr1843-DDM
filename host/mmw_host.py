@@ -20,6 +20,7 @@ HEADER = struct.Struct("<8s8I")  # magic, version, totalPacketLen, platform, fra
 TLV_HEADER = struct.Struct("<2I")  # type, payload length
 POINT = struct.Struct("<4f")  # x, y, z, doppler velocity
 TLV_DETECTED_POINTS = 1
+MAX_FRAME_BYTES = 1 << 20  # well above the largest demo frame (heat maps included)
 
 
 @dataclass(frozen=True)
@@ -54,13 +55,25 @@ def send_config(cli: serial.Serial, cfg: Path) -> None:
         time.sleep(0.01)
 
 
+class FrameError(ValueError):
+    """A frame whose lengths are inconsistent, usually because UART bytes were dropped."""
+
+
 def read_frame(data: serial.Serial) -> Frame:
-    """Block until one complete frame is received and return its TLV payloads."""
+    """Block until one complete frame is received and return its TLV payloads.
+
+    Raises FrameError for a corrupted frame; the next call resynchronises on the
+    following magic word.
+    """
     buf = data.read_until(MAGIC)
     if not buf.endswith(MAGIC):
         raise TimeoutError("no frame received on data port")
     rest = data.read(HEADER.size - len(MAGIC))
+    if len(rest) != HEADER.size - len(MAGIC):
+        raise TimeoutError("truncated frame header")
     _, _, total_len, _, frame_no, _, _, num_tlvs, _ = HEADER.unpack(MAGIC + rest)
+    if not HEADER.size <= total_len <= MAX_FRAME_BYTES:
+        raise FrameError(f"frame length {total_len} out of range")
     body = data.read(total_len - HEADER.size)
     if len(body) != total_len - HEADER.size:
         raise TimeoutError("truncated frame")
@@ -68,8 +81,12 @@ def read_frame(data: serial.Serial) -> Frame:
     tlvs: dict[int, bytes] = {}
     offset = 0
     for _ in range(num_tlvs):
+        if offset + TLV_HEADER.size > len(body):
+            raise FrameError(f"frame {frame_no}: TLV header past end of frame")
         tlv_type, length = TLV_HEADER.unpack_from(body, offset)
         offset += TLV_HEADER.size
+        if offset + length > len(body):
+            raise FrameError(f"frame {frame_no}: TLV {tlv_type} length {length} past end of frame")
         tlvs[tlv_type] = body[offset:offset + length]
         offset += length
     return Frame(frame_no, tlvs)
@@ -89,7 +106,11 @@ def main() -> int:
         data.reset_input_buffer()
         try:
             for _ in range(args.frames):
-                frame = read_frame(data)
+                try:
+                    frame = read_frame(data)
+                except FrameError as err:
+                    print(f"skipped corrupted frame: {err}", file=sys.stderr)
+                    continue
                 nearest = min(frame.points, key=lambda p: p.x**2 + p.y**2, default=None)
                 summary = (f"nearest ({nearest.x:+.2f}, {nearest.y:+.2f}, {nearest.z:+.2f}) m, "
                            f"v={nearest.v:+.2f} m/s") if nearest else "no points"
