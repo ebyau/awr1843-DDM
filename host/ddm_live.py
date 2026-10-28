@@ -129,7 +129,8 @@ def main() -> int:
     raw_image = draw_axes(ax_raw, empty, range_step, args.bands)
     ax_raw.set_title("Raw: one copy per TX", color=INK, loc="left")
     vel_image = ax_vel.imshow(empty, cmap=CMAP, aspect="auto", origin="lower", interpolation="nearest",
-                              extent=(-max_velocity, max_velocity, 0, max_range))
+                              extent=(-max_velocity - velocity_step / 2, max_velocity - velocity_step / 2,
+                                      -range_step / 2, max_range - range_step / 2))
     style(ax_vel, "DDM decoded", "Radial velocity (m/s)", "Range (m)")
     top_image = ax_top.imshow(np.zeros(inside.shape), cmap=CMAP, aspect="equal", origin="lower",
                               extent=(-max_range, max_range, 0, max_range))
@@ -158,6 +159,8 @@ def main() -> int:
     finally:
         stop.set()
         reader.join(timeout=5)
+        if reader.is_alive():
+            print("capture did not stop; send sensorStop to the radar before the next run", file=sys.stderr)
     return 0
 
 

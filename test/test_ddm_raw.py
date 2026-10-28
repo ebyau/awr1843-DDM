@@ -6,7 +6,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ddm_raw import chirp_axes, find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
+from ddm_raw import (
+    chirp_axes,
+    ddm_virtual_array,
+    doppler_spectrum,
+    find_targets,
+    fold,
+    range_doppler_power,
+    remove_static,
+    signed_doppler_bin,
+    tx0_band,
+)
 from raw_capture import iiqq_to_complex, parse_cfg, raw_frame_shape
 
 RAW_CFG = Path(__file__).parents[1] / "host" / "profiles" / "ddm_aop_raw.cfg"
@@ -71,3 +81,30 @@ def test_simulated_ddm_target_is_resolved(doppler_bin: int) -> None:
     tx0 = tx0_band(power[target_range, folded_bin::width], num_tx)
     assert target_range == range_bin
     assert signed_doppler_bin(folded_bin, tx0, width, chirps) == (doppler_bin + 64) % chirps - 64
+
+
+def ddm_frame(doppler_bin: int, range_bin: int, antenna_phase: np.ndarray) -> np.ndarray:
+    """One noiseless DDM frame [chirp, rx, sample]: 3 phase-coded TX, 4 sub-bands."""
+    n = np.arange(128)[:, None, None]
+    s = np.arange(256)
+    return sum(np.exp(2j * np.pi * (doppler_bin * n / 128 + k * n / 4 + range_bin * s / 256)
+                      + 1j * antenna_phase[k][None, :, None]) for k in range(3))
+
+
+def test_remove_static_removes_every_tx_copy_of_static_targets() -> None:
+    phase = np.zeros((3, 4))
+    static = ddm_frame(0, 20, phase)
+    moving = ddm_frame(-10, 40, phase)
+    power = (np.abs(doppler_spectrum(remove_static(static + moving, 4))) ** 2).sum(axis=1)
+    assert power[[0, 32, 64, 96], 20].max() < 1e-6 * power.max()
+    assert power[(-10 + 128) % 128, 40] == pytest.approx(power.max(), rel=0.01)  # moving target kept
+
+
+def test_ddm_virtual_array_separates_tx_copies() -> None:
+    phase = np.random.default_rng(2).uniform(-np.pi, np.pi, (3, 4))
+    virtual, tx0_bin = ddm_virtual_array(doppler_spectrum(ddm_frame(-10, 20, phase)), 4, 3)
+    folded = (-10) % 32
+    assert tx0_bin[folded, 20] == (-10) % 128
+    measured = np.angle(virtual[folded, 20] / virtual[folded, 20, 0, 0])
+    expected = phase - phase[0, 0]
+    assert np.allclose(np.angle(np.exp(1j * (measured - expected))), 0, atol=1e-3)

@@ -58,7 +58,8 @@ def draw_axes(ax: Axes, db: np.ndarray, range_step: float, bands: int) -> AxesIm
     shift = width // 2 if bands > 0 else 0
     image = ax.imshow(centre_bands(db, bands), cmap=CMAP, vmin=-DYNAMIC_RANGE_DB, vmax=0,
                       aspect="auto", origin="lower", interpolation="nearest",
-                      extent=(-shift - 0.5, num_doppler - shift - 0.5, 0, num_range * range_step))
+                      extent=(-shift - 0.5, num_doppler - shift - 0.5,
+                              -range_step / 2, (num_range - 0.5) * range_step))
     ax.set_xlabel("Doppler bin (unfolded; negative bins wrap from the top)", color=MUTED)
     ax.set_ylabel("Range (m)", color=MUTED)
     ax.tick_params(colors=MUTED)
