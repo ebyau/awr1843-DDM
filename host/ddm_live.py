@@ -11,7 +11,7 @@ Brightness follows the xwr demo: amplitude raised to GAMMA (linear amplitude in 
 top view), with the colour scale clipped to the PCLIP percentiles, so noise and
 sidelobes stay dark.
 
-Usage: uv run python host/ddm_live.py CONFIG.cfg [--bands 4] [--tx 3] [--remove-static]
+Usage: uv run python host/ddm_live.py CONFIG.cfg [--remove-static]
 """
 
 from __future__ import annotations
@@ -21,16 +21,17 @@ import contextlib
 import queue
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.image import AxesImage
-from xwr import DCAConfig
 
 from ddm_raw import DETECTION_DB, chirp_axes, ddm_virtual_array, doppler_spectrum, remove_static
-from raw_capture import capture, parse_cfg, raw_frame_shape
-from rd_view import CMAP, INK, MUTED, centre_bands, draw_axes
+from mmw_host import add_port_args, ddm_params, load_cfg
+from plotting import CMAP, centre_bands, draw_axes, style
+from raw_capture import capture, chirps_per_loop, open_capture_card, raw_frame_shape
 
 AZIMUTH_BINS = 128
 TOP_VIEW_PIXELS = 256  # along y; x has twice as many
@@ -38,14 +39,16 @@ GAMMA = 0.5
 PCLIP = 0.1
 
 
-def decode(frame: np.ndarray, bands: int, num_tx: int, static: bool) -> tuple[np.ndarray, ...]:
+def decode(frame: np.ndarray, bands: int, num_tx: int,
+           static_loop: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One raw frame [chirp, rx, sample] -> power maps: raw [range, Doppler], decoded
     velocity [range, Doppler] and azimuth [range, angle].
 
-    The decoded maps hold only cells DETECTION_DB above the noise; the others would
-    land at arbitrary velocities and angles.
+    static_loop, the chirps per loop, removes stationary objects. The decoded maps hold
+    only cells DETECTION_DB above the noise; the others would land at arbitrary
+    velocities and angles.
     """
-    spectrum = doppler_spectrum(frame if static else remove_static(frame, bands))
+    spectrum = doppler_spectrum(frame if static_loop is None else remove_static(frame, static_loop))
     raw = (np.abs(spectrum) ** 2).sum(axis=1).T
     virtual, tx0_bin = ddm_virtual_array(spectrum, bands, num_tx)  # [folded bin, range, ...]
     cell_power = (np.abs(virtual) ** 2).sum(axis=(2, 3))
@@ -86,16 +89,8 @@ def show(image: AxesImage, power: np.ndarray, pclip: float = PCLIP, gamma: float
     image.set_clim(low, max(high, low + 1e-9))
 
 
-def style(ax: plt.Axes, title: str, xlabel: str, ylabel: str) -> None:
-    ax.set_title(title, color=INK, loc="left")
-    ax.set_xlabel(xlabel, color=MUTED)
-    ax.set_ylabel(ylabel, color=MUTED)
-    ax.tick_params(colors=MUTED)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
 
-
-def read_frames(stream, latest: queue.Queue[np.ndarray], stop: threading.Event) -> None:
+def read_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray], stop: threading.Event) -> None:
     """Keep only the newest frame so slow plotting never backs up the capture."""
     try:
         for frame in stream:
@@ -111,13 +106,15 @@ def read_frames(stream, latest: queue.Queue[np.ndarray], stop: threading.Event) 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("config", type=Path)
-    parser.add_argument("--bands", type=int, default=4)
-    parser.add_argument("--tx", type=int, default=3)
     parser.add_argument("--remove-static", action="store_true", help="hide stationary objects")
-    parser.add_argument("--cli", default="/dev/ttyUSB0")
+    add_port_args(parser, data=False)
     args = parser.parse_args()
 
-    cfg = parse_cfg(args.config.read_text())
+    cfg = load_cfg(args.config)
+    bands, num_tx = ddm_params(cfg)
+    if bands <= num_tx:
+        raise ValueError("the configuration is not DDM (ddmCfg with more bands than TX)")
+    static_loop = chirps_per_loop(cfg) if args.remove_static else None
     num_chirps, _, num_range = raw_frame_shape(cfg)
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     max_range = num_range * range_step
@@ -126,19 +123,18 @@ def main() -> int:
 
     fig, (ax_raw, ax_vel, ax_top) = plt.subplots(1, 3, figsize=(15, 5.5), layout="constrained")
     empty = np.zeros((num_range, num_chirps))
-    raw_image = draw_axes(ax_raw, empty, range_step, args.bands)
-    ax_raw.set_title("Raw: one copy per TX", color=INK, loc="left")
+    raw_image = draw_axes(ax_raw, empty, range_step, bands, "Raw: one copy per TX")
     vel_image = ax_vel.imshow(empty, cmap=CMAP, aspect="auto", origin="lower", interpolation="nearest",
                               extent=(-max_velocity - velocity_step / 2, max_velocity - velocity_step / 2,
                                       -range_step / 2, max_range - range_step / 2))
     style(ax_vel, "DDM decoded", "Radial velocity (m/s)", "Range (m)")
     top_image = ax_top.imshow(np.zeros(inside.shape), cmap=CMAP, aspect="equal", origin="lower",
                               extent=(-max_range, max_range, 0, max_range))
-    style(ax_top, "Top view (3-TX virtual array)", "x (m)", "y (m)")
+    style(ax_top, f"Top view ({num_tx}-TX virtual array)", "x (m)", "y (m)")
 
     latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
     stop = threading.Event()
-    stream = capture(args.config, args.cli, DCAConfig(timeout=3.0).create())
+    stream = capture(args.config, args.cli, open_capture_card())
     reader = threading.Thread(target=read_frames, args=(stream, latest, stop), daemon=True)
     reader.start()
     try:
@@ -150,10 +146,10 @@ def main() -> int:
                     raise RuntimeError("capture stopped; see the error above") from None
                 plt.pause(0.02)
                 continue
-            raw, velocity, azimuth = decode(frame, args.bands, args.tx, not args.remove_static)
-            show(raw_image, centre_bands(raw, args.bands))
+            raw, velocity, azimuth = decode(frame, bands, num_tx, static_loop)
+            show(raw_image, centre_bands(raw, bands))
             show(vel_image, velocity, pclip=0)
-            # Linear amplitude, as in the xwr demo: the wide 3-element beam's sidelobes stay dark.
+            # Linear amplitude, as in the xwr demo: the wide beam's sidelobes stay dark.
             show(top_image, np.where(inside, azimuth[range_bin, azimuth_bin], np.nan), pclip=0, gamma=1)
             plt.pause(0.02)
     finally:

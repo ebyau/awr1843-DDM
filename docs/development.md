@@ -16,7 +16,9 @@ sdk/                      mmWave SDK 03.06.02: modified sources tracked, the res
   packages/ti/datapath/             processing chain (DPC and DPUs) and data interfaces
   packages/ti/board/                antenna geometry (stock)
 host/                     Python host tools
-  mmw_host.py               send a .cfg file, print a per-frame point-cloud summary
+  mmw_host.py               send a .cfg file, print a per-frame point-cloud summary;
+                            shared config, serial and frame-decoding helpers
+  plotting.py               shared plot style and the range-Doppler plot with sub-bands
   rd_view.py                live range-Doppler heat map with sub-band markers
   ddm_check.py              level per Doppler sub-band at the strongest range bin
   raw_capture.py            raw ADC capture through a DCA1000EVM (uses xwr)
@@ -82,7 +84,7 @@ the SDK's drivers, control, utils and build scripts under `sdk/packages/`.
 | `MMWAVE_SDK_INSTALL_PATH` | `sdk/packages` of this repository, computed from the script's location | The build uses the repository's SDK copy, not the one in `~/ti` |
 
 If the TI tools are elsewhere, export `MMWAVE_SDK_TOOLS_INSTALL_PATH` before building. UniFlash's
-path is set in `flash.sh` (`${HOME}/ti/uniflash_9.7.0`).
+path defaults to `${HOME}/ti/uniflash_9.7.0`; set `UNIFLASH_DIR` to use another install.
 
 `env.sh` sources `setenv.sh` into the current shell. `build.sh` does this itself; source it
 only for running `make` by hand:
@@ -206,9 +208,9 @@ uv run python host/ddm_check.py host/profiles/ddm_aop_rdmap.cfg --frames 5
 
 | Tool | Does | Options |
 |---|---|---|
-| `mmw_host.py` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. Also the frame decoder used by the other tools. | `--frames N` (default 10) |
-| `rd_view.py` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default 4, `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
-| `ddm_check.py` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N`, `--frames N`, `--range-bins N` (default 256; use 128 with `ddm_phase2_aop.cfg`) |
+| `mmw_host.py` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. Also the library the other tools share: configuration parsing, serial ports and the frame decoder. | `--frames N` (default 10) |
+| `rd_view.py` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
+| `ddm_check.py` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N` (default from `ddmCfg`), `--frames N` |
 
 For a snapshot on a machine without a display, select a non-interactive matplotlib backend:
 
@@ -218,6 +220,11 @@ MPLBACKEND=Agg uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg --s
 
 Frames that arrive corrupted (dropped UART bytes) are skipped with a message on stderr by
 `mmw_host.py` and `rd_view.py`.
+
+The sub-band and TX counts are read from the configuration (`ddmCfg` and the TX mask of
+`chirpCfg`), and range and velocity from `profileCfg` and `frameCfg`, so the tools follow a
+changed chirp configuration without extra options. `ddm_raw.py` reads the configuration
+saved in the capture file.
 
 ### Raw data capture
 
@@ -235,8 +242,8 @@ uv run python host/ddm_live.py host/profiles/ddm_aop_raw.cfg --remove-static
 | Tool | Does | Options |
 |---|---|---|
 | `raw_capture.py` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. The configuration needs complex ADC output and `lvdsStreamCfg -1 0 1 0`; `ddm_aop_raw.cfg` is `ddm_aop.cfg` with these set and only the point cloud on the UART data port. | `--frames N` (default 50), `--out FILE.npz`, `--cli PORT` |
-| `ddm_live.py` | Live three-panel view: the raw range-Doppler map with one copy per TX, the range-velocity map after DDM separates the copies (cells 15 dB above noise, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--bands N`, `--tx N`, `--cli PORT` |
-| `ddm_raw.py` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map with sub-band markers, and for the strongest targets on the folded map beyond 0.25 m: range, unambiguous velocity, TX0 sub-band, level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--bands N` (default 4), `--tx N` (default 3), `--snapshot FILE.png` |
+| `ddm_live.py` | Live three-panel view: the raw range-Doppler map with one copy per TX, the range-velocity map after DDM separates the copies (cells 15 dB above noise, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
+| `ddm_raw.py` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map with sub-band markers, and for the strongest targets on the folded map beyond the near edge of the CFAR range window (`cfarFovCfg`): range, unambiguous velocity, TX0 sub-band, level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
 
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger
 `net.core.rmem_max`, switch settings) is described in xwr's

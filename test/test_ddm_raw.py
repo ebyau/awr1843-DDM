@@ -12,12 +12,14 @@ from ddm_raw import (
     doppler_spectrum,
     find_targets,
     fold,
+    min_range_m,
     range_doppler_power,
     remove_static,
     signed_doppler_bin,
     tx0_band,
 )
-from raw_capture import iiqq_to_complex, parse_cfg, raw_frame_shape
+from mmw_host import parse_cfg
+from raw_capture import iiqq_to_complex, raw_frame_shape
 
 RAW_CFG = Path(__file__).parents[1] / "host" / "profiles" / "ddm_aop_raw.cfg"
 
@@ -56,6 +58,11 @@ def test_iiqq_round_trip() -> None:
     shape = (4, 2, 8)
     iq = (rng.integers(-2000, 2000, shape) + 1j * rng.integers(-2000, 2000, shape)).astype(np.complex64)
     assert np.array_equal(iiqq_to_complex(to_iiqq(iq), shape), iq)
+
+
+def test_min_range_from_cfar_range_window() -> None:
+    assert min_range_m(parse_cfg(RAW_CFG.read_text())) == 0.25
+    assert min_range_m(parse_cfg("profileCfg 0\n")) == 0.0
 
 
 def test_chirp_axes_match_firmware_profile() -> None:

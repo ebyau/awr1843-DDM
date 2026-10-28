@@ -1,15 +1,22 @@
 # SPDX-License-Identifier: MIT
 """Configure the mmw demo over the CLI port and decode frames from the data port.
 
+Also the shared library of the host tools: configuration parsing, serial ports and
+the UART frame decoder.
+
 Usage: uv run python host/mmw_host.py CONFIG.cfg [--frames N] [--cli PORT] [--data PORT]
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
+import math
 import struct
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,8 +28,15 @@ HEADER = struct.Struct("<8s8I")  # magic, version, totalPacketLen, platform, fra
 TLV_HEADER = struct.Struct("<2I")  # type, payload length
 POINT = struct.Struct("<4f")  # x, y, z, doppler velocity
 TLV_DETECTED_POINTS = 1
+TLV_RANGE_DOPPLER = 5
+HEATMAP_Q8_TO_DB = 20 * math.log10(2) / 2**8  # heat map values are log2 magnitude in Q8
 MAX_FRAME_BYTES = 1 << 20  # well above the largest demo frame (heat maps included)
-SPEED_OF_LIGHT = 3e8
+SPEED_OF_LIGHT = 299_792_458.0
+
+CLI_PORT, CLI_BAUD, CLI_TIMEOUT_S = "/dev/ttyUSB0", 115200, 6.0
+DATA_PORT, DATA_BAUD, DATA_TIMEOUT_S = "/dev/ttyUSB1", 921600, 3.0
+
+Config = dict[str, list[list[str]]]
 
 
 @dataclass(frozen=True)
@@ -44,17 +58,46 @@ class Frame:
         return [Point(*p) for p in POINT.iter_unpack(payload)]
 
 
-def range_axis(cfg: Path) -> tuple[int, float]:
-    """Number of range bins and metres per bin, from the configuration's profileCfg."""
-    for line in cfg.read_text().splitlines():
+class FrameError(ValueError):
+    """A frame whose lengths are inconsistent, usually because UART bytes were dropped."""
+
+
+def parse_cfg(text: str) -> Config:
+    """CLI command -> the arguments of each of its occurrences, comments skipped."""
+    commands: Config = {}
+    for line in text.splitlines():
         fields = line.split()
-        if fields and fields[0] == "profileCfg":
-            slope_hz_per_s = float(fields[8]) * 1e12
-            num_samples = int(fields[10])
-            sample_rate_hz = float(fields[11]) * 1e3
-            num_bins = 1 << (num_samples - 1).bit_length()
-            return num_bins, SPEED_OF_LIGHT * sample_rate_hz / (2 * slope_hz_per_s * num_bins)
-    raise ValueError(f"no profileCfg in {cfg}")
+        if fields and not fields[0].startswith("%"):
+            commands.setdefault(fields[0], []).append(fields[1:])
+    return commands
+
+
+def load_cfg(path: Path) -> Config:
+    return parse_cfg(path.read_text())
+
+
+def cfg_args(cfg: Config, command: str) -> list[str]:
+    """Arguments of the first occurrence of a command."""
+    if command not in cfg:
+        raise ValueError(f"configuration has no {command}")
+    return cfg[command][0]
+
+
+def range_axis(cfg: Config) -> tuple[int, float]:
+    """Number of range bins and metres per bin, from profileCfg."""
+    profile = cfg_args(cfg, "profileCfg")
+    slope_hz_per_s = float(profile[7]) * 1e12
+    num_samples = int(profile[9])
+    sample_rate_hz = float(profile[10]) * 1e3
+    num_bins = 1 << (num_samples - 1).bit_length()
+    return num_bins, SPEED_OF_LIGHT * sample_rate_hz / (2 * slope_hz_per_s * num_bins)
+
+
+def ddm_params(cfg: Config) -> tuple[int, int]:
+    """(Doppler sub-bands, TX antennas per chirp) from ddmCfg and the first chirpCfg;
+    0 sub-bands means TDM."""
+    bands = int(cfg["ddmCfg"][0][0]) if "ddmCfg" in cfg else 0
+    return bands, int(cfg_args(cfg, "chirpCfg")[7]).bit_count()
 
 
 def send_config(cli: serial.Serial, cfg: Path) -> None:
@@ -70,8 +113,23 @@ def send_config(cli: serial.Serial, cfg: Path) -> None:
         time.sleep(0.01)
 
 
-class FrameError(ValueError):
-    """A frame whose lengths are inconsistent, usually because UART bytes were dropped."""
+def add_port_args(parser: argparse.ArgumentParser, data: bool = True) -> None:
+    parser.add_argument("--cli", default=CLI_PORT, help=f"CLI port (default {CLI_PORT})")
+    if data:
+        parser.add_argument("--data", default=DATA_PORT, help=f"data port (default {DATA_PORT})")
+
+
+@contextmanager
+def running_radar(cfg: Path, cli_port: str, data_port: str) -> Iterator[serial.Serial]:
+    """Configure and start the radar; yields the data port and stops the radar on exit."""
+    with serial.Serial(cli_port, CLI_BAUD, timeout=CLI_TIMEOUT_S) as cli, \
+         serial.Serial(data_port, DATA_BAUD, timeout=DATA_TIMEOUT_S) as data:
+        send_config(cli, cfg)
+        data.reset_input_buffer()
+        try:
+            yield data
+        finally:
+            cli.write(b"sensorStop\n")
 
 
 def read_frame(data: serial.Serial) -> Frame:
@@ -109,31 +167,28 @@ def read_frame(data: serial.Serial) -> Frame:
     return Frame(frame_no, tlvs)
 
 
+def frames(data: serial.Serial) -> Iterator[Frame]:
+    """Frames from the data port, skipping corrupted ones with a message on stderr."""
+    while True:
+        try:
+            yield read_frame(data)
+        except FrameError as err:
+            print(f"skipped corrupted frame: {err}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("config", type=Path)
     parser.add_argument("--frames", type=int, default=10)
-    parser.add_argument("--cli", default="/dev/ttyUSB0")
-    parser.add_argument("--data", default="/dev/ttyUSB1")
+    add_port_args(parser)
     args = parser.parse_args()
 
-    with serial.Serial(args.cli, 115200, timeout=6) as cli, \
-         serial.Serial(args.data, 921600, timeout=2) as data:
-        send_config(cli, args.config)
-        data.reset_input_buffer()
-        try:
-            for _ in range(args.frames):
-                try:
-                    frame = read_frame(data)
-                except FrameError as err:
-                    print(f"skipped corrupted frame: {err}", file=sys.stderr)
-                    continue
-                nearest = min(frame.points, key=lambda p: p.x**2 + p.y**2, default=None)
-                summary = (f"nearest ({nearest.x:+.2f}, {nearest.y:+.2f}, {nearest.z:+.2f}) m, "
-                           f"v={nearest.v:+.2f} m/s") if nearest else "no points"
-                print(f"frame {frame.number:5d}: {len(frame.points):3d} points, {summary}")
-        finally:
-            cli.write(b"sensorStop\n")
+    with running_radar(args.config, args.cli, args.data) as data:
+        for frame in itertools.islice(frames(data), args.frames):
+            nearest = min(frame.points, key=lambda p: p.x**2 + p.y**2, default=None)
+            summary = (f"nearest ({nearest.x:+.2f}, {nearest.y:+.2f}, {nearest.z:+.2f}) m, "
+                       f"v={nearest.v:+.2f} m/s") if nearest else "no points"
+            print(f"frame {frame.number:5d}: {len(frame.points):3d} points, {summary}")
     return 0
 
 

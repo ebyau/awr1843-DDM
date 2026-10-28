@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import io
 import struct
-from pathlib import Path
 
 import pytest
 
@@ -16,6 +15,8 @@ from mmw_host import (
     TLV_DETECTED_POINTS,
     TLV_HEADER,
     FrameError,
+    ddm_params,
+    parse_cfg,
     range_axis,
     read_frame,
 )
@@ -85,10 +86,22 @@ def test_missing_or_truncated_frame_times_out() -> None:
         read_frame(FakePort(make_frame(6, [(6, b"payload")])[:-3]))
 
 
-def test_range_axis_matches_profile(tmp_path: Path) -> None:
-    cfg = tmp_path / "profile.cfg"
-    cfg.write_text("% comment\nprofileCfg 0 77 7 3 39 0 0 100 1 256 7200 0 0 30\n")
+def test_range_axis_rounds_samples_up_to_fft_size() -> None:
+    cfg = parse_cfg("% comment\nprofileCfg 0 77 7 3 39 0 0 100 1 200 7200 0 0 30\n")
     num_bins, step = range_axis(cfg)
 
     assert num_bins == 256
-    assert step == pytest.approx(3e8 * 7.2e6 / (2 * 100e12 * 256))
+    assert step == pytest.approx(0.04217, rel=1e-3)  # c * fs / (2 * slope * 256)
+
+
+def test_parse_cfg_keeps_every_occurrence() -> None:
+    cfg = parse_cfg("cfarFovCfg -1 0 0.25 15\n% comment\ncfarFovCfg -1 1 -21.2 21.2\n")
+    assert cfg["cfarFovCfg"] == [["-1", "0", "0.25", "15"], ["-1", "1", "-21.2", "21.2"]]
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("chirpCfg 0 0 0 0 0 0 0 7\nddmCfg 4\n", (4, 3)),   # DDM, 3 TX per chirp
+    ("chirpCfg 0 0 0 0 0 0 0 1\nchirpCfg 1 1 0 0 0 0 0 2\n", (0, 1)),  # TDM
+])
+def test_ddm_params(text: str, expected: tuple[int, int]) -> None:
+    assert ddm_params(parse_cfg(text)) == expected

@@ -6,7 +6,9 @@ on the sub-band-folded map (as the firmware does), and prints for each the TX0
 sub-band, the unambiguous velocity and the level of every sub-band, so the TX
 copies and the empty sub-band can be checked independently of the firmware.
 
-Usage: uv run python host/ddm_raw.py capture.npz [--bands 4] [--tx 3] [--snapshot out.png]
+The sub-band and TX counts come from the configuration saved with the capture.
+
+Usage: uv run python host/ddm_raw.py capture.npz [--snapshot out.png]
 """
 
 from __future__ import annotations
@@ -18,24 +20,31 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mmw_host import SPEED_OF_LIGHT
-from raw_capture import parse_cfg
-from rd_view import INK, draw_axes
+from mmw_host import SPEED_OF_LIGHT, Config, cfg_args, ddm_params, parse_cfg, range_axis
+from plotting import draw_axes
 
+# Host-side peak picking, a simpler statistic than the firmware's CFAR: changing
+# cfarCfg does not change it.
 DETECTION_DB = 15.0  # above the median of the folded map
-MIN_RANGE_M = 0.25  # skips TX-to-RX leakage, like the firmware's CFAR range window
 MAX_TARGETS = 10
 
 
-def chirp_axes(cfg: dict[str, list[str]], num_chirps: int) -> tuple[float, float]:
+def chirp_axes(cfg: Config, num_chirps: int) -> tuple[float, float]:
     """Metres per range bin and m/s per Doppler bin when every chirp is sampled."""
-    _, start_ghz, idle_us, adc_start_us, ramp_end_us, _, _, slope_mhz_us, _, samples, rate_ksps = (
-        float(f) for f in cfg["profileCfg"][:11])
+    profile = [float(f) for f in cfg_args(cfg, "profileCfg")[:11]]
+    start_ghz, idle_us, adc_start_us, ramp_end_us = profile[1:5]
+    slope_mhz_us, samples, rate_ksps = profile[7], profile[9], profile[10]
     sample_time_us = samples / (rate_ksps / 1e3)
     centre_hz = (start_ghz * 1e3 + slope_mhz_us * (adc_start_us + sample_time_us / 2)) * 1e6
-    range_step = SPEED_OF_LIGHT * rate_ksps * 1e3 / (2 * slope_mhz_us * 1e12 * samples)
     velocity_step = SPEED_OF_LIGHT / (2 * centre_hz * num_chirps * (idle_us + ramp_end_us) * 1e-6)
-    return range_step, velocity_step
+    return range_axis(cfg)[1], velocity_step
+
+
+def min_range_m(cfg: Config) -> float:
+    """Near edge of the firmware's CFAR range window (cfarFovCfg ... 0 min max), which
+    also skips TX-to-RX leakage; 0 without one."""
+    windows = [args for args in cfg.get("cfarFovCfg", []) if args[1] == "0"]
+    return float(windows[0][2]) if windows else 0.0
 
 
 def doppler_spectrum(frames: np.ndarray) -> np.ndarray:
@@ -50,14 +59,14 @@ def range_doppler_power(frames: np.ndarray) -> np.ndarray:
     return (np.abs(doppler_spectrum(frames)) ** 2).sum(axis=2).mean(axis=0).T
 
 
-def remove_static(frames: np.ndarray, bands: int) -> np.ndarray:
+def remove_static(frames: np.ndarray, chirps_per_loop: int) -> np.ndarray:
     """Subtracts each chirp slot's mean over the loops of a frame [..., chirp, rx, sample].
 
-    This removes the Doppler bins that are multiples of the sub-band width, which hold
-    every TX copy of a static target.
+    This removes the Doppler bins that are multiples of the number of loops. With DDM
+    (one chirp per sub-band in a loop) those hold every TX copy of a static target.
     """
     shape = frames.shape
-    slots = frames.reshape(*shape[:-3], shape[-3] // bands, bands, *shape[-2:])
+    slots = frames.reshape(*shape[:-3], shape[-3] // chirps_per_loop, chirps_per_loop, *shape[-2:])
     return (slots - slots.mean(axis=-4, keepdims=True)).reshape(shape)
 
 
@@ -117,26 +126,27 @@ def signed_doppler_bin(folded_bin: int, tx0: int, width: int, num_chirps: int) -
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("capture", type=Path)
-    parser.add_argument("--bands", type=int, default=4)
-    parser.add_argument("--tx", type=int, default=3)
     parser.add_argument("--snapshot", type=Path, help="save the range-Doppler map to this PNG")
     args = parser.parse_args()
 
     data = np.load(args.capture)
     frames, cfg = data["frames"], parse_cfg(str(data["config"]))
+    bands, num_tx = ddm_params(cfg)
+    if bands <= num_tx:
+        raise ValueError("the capture's configuration is not DDM (ddmCfg with more bands than TX)")
     num_chirps = frames.shape[1]
-    width = num_chirps // args.bands
+    width = num_chirps // bands
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     power = range_doppler_power(frames)
 
     print(f"{len(frames)} frames; {range_step:.3f} m and {velocity_step:.3f} m/s per bin")
-    print(" range(m)  v(m/s)  TX0  " + "  ".join(f"band{b}(dB)" for b in range(args.bands))
+    print(" range(m)  v(m/s)  TX0  " + "  ".join(f"band{b}(dB)" for b in range(bands))
           + "  weakest TX - mean spare (dB)")
-    min_range_bin = int(np.ceil(MIN_RANGE_M / range_step))
-    for range_bin, folded_bin in find_targets(fold(power, args.bands), min_range_bin):
+    min_range_bin = int(np.ceil(min_range_m(cfg) / range_step))
+    for range_bin, folded_bin in find_targets(fold(power, bands), min_range_bin):
         band_power = power[range_bin, folded_bin::width]
-        tx0 = int(tx0_band(band_power, args.tx))
-        tx_bands = [(tx0 + k) % args.bands for k in range(args.tx)]
+        tx0 = int(tx0_band(band_power, num_tx))
+        tx_bands = [(tx0 + k) % bands for k in range(num_tx)]
         spare = np.delete(band_power, tx_bands)
         margin_db = 10 * np.log10(band_power[tx_bands].min() / spare.mean())
         signed_bin = signed_doppler_bin(folded_bin, tx0, width, num_chirps)
@@ -146,9 +156,8 @@ def main() -> int:
 
     fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
     db = 10 * np.log10(power / power.max())
-    image = draw_axes(ax, db, range_step, args.bands)
+    image = draw_axes(ax, db, range_step, bands, f"Raw-data range-Doppler map, {len(frames)} frames")
     fig.colorbar(image, ax=ax, label="Level relative to peak (dB)", shrink=0.8)
-    ax.set_title(f"Raw-data range-Doppler map, {len(frames)} frames", color=INK, loc="left")
     if args.snapshot is not None:
         fig.savefig(args.snapshot, dpi=120)
         print(f"Saved {args.snapshot}")

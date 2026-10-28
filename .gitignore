@@ -45,3 +45,6 @@ __pycache__/
 
 # Python environment
 .venv/
+
+# Screenshots saved in the repository root (figures for the docs go in images/)
+/*.png

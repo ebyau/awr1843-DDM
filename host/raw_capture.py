@@ -22,28 +22,30 @@ import serial
 from xwr import DCAConfig
 from xwr.capture import DCA1000EVM
 
-from mmw_host import send_config
+from mmw_host import CLI_BAUD, CLI_TIMEOUT_S, Config, add_port_args, cfg_args, load_cfg, send_config
+
+CAPTURE_TIMEOUT_S = 3.0  # the stream ends when no data arrives for this long
 
 
-def parse_cfg(text: str) -> dict[str, list[str]]:
-    """CLI command -> arguments of its last occurrence, comments skipped."""
-    commands: dict[str, list[str]] = {}
-    for line in text.splitlines():
-        fields = line.split()
-        if fields and not fields[0].startswith("%"):
-            commands[fields[0]] = fields[1:]
-    return commands
+def chirps_per_loop(cfg: Config) -> int:
+    chirp_start, chirp_end = (int(f) for f in cfg_args(cfg, "frameCfg")[:2])
+    return chirp_end - chirp_start + 1
 
 
-def raw_frame_shape(cfg: dict[str, list[str]]) -> tuple[int, int, int]:
+def raw_frame_shape(cfg: Config) -> tuple[int, int, int]:
     """(chirps, rx, samples) of one raw frame; every chirp carries all enabled RX."""
-    if cfg["adcCfg"][1] == "0":
+    if cfg_args(cfg, "adcCfg")[1] == "0":
         raise ValueError("raw capture needs complex ADC output (adcCfg 2 1)")
-    if cfg["lvdsStreamCfg"][1:4] != ["0", "1", "0"]:
+    if cfg_args(cfg, "lvdsStreamCfg")[1:4] != ["0", "1", "0"]:
         raise ValueError("raw capture needs headerless ADC data on LVDS (lvdsStreamCfg -1 0 1 0)")
-    chirp_start, chirp_end, loops = (int(f) for f in cfg["frameCfg"][:3])
-    num_rx = int(cfg["channelCfg"][0]).bit_count()
-    return (chirp_end - chirp_start + 1) * loops, num_rx, int(cfg["profileCfg"][9])
+    loops = int(cfg_args(cfg, "frameCfg")[2])
+    num_rx = int(cfg_args(cfg, "channelCfg")[0]).bit_count()
+    return chirps_per_loop(cfg) * loops, num_rx, int(cfg_args(cfg, "profileCfg")[9])
+
+
+def open_capture_card() -> DCA1000EVM:
+    """Capture card at xwr's default addresses (PC 192.168.33.30, card 192.168.33.180)."""
+    return DCAConfig(timeout=CAPTURE_TIMEOUT_S).create()
 
 
 def iiqq_to_complex(data: bytes | bytearray, shape: tuple[int, int, int]) -> np.ndarray:
@@ -65,8 +67,8 @@ def capture(cfg_path: Path, cli_port: str, dca: DCA1000EVM) -> Iterator[np.ndarr
     The capture card starts after the radar stops and before it restarts, so that
     its byte count, which sets the frame boundaries, starts at the first chirp.
     """
-    shape = raw_frame_shape(parse_cfg(cfg_path.read_text()))
-    with serial.Serial(cli_port, 115200, timeout=6) as cli:
+    shape = raw_frame_shape(load_cfg(cfg_path))
+    with serial.Serial(cli_port, CLI_BAUD, timeout=CLI_TIMEOUT_S) as cli:
         cli.write(b"sensorStop\n")
         cli.read_until(b"mmwDemo:/>")
         dca.stop()
@@ -89,11 +91,10 @@ def main() -> int:
     parser.add_argument("config", type=Path)
     parser.add_argument("--frames", type=int, default=50)
     parser.add_argument("--out", type=Path, default=Path("capture.npz"))
-    parser.add_argument("--cli", default="/dev/ttyUSB0")
+    add_port_args(parser, data=False)
     args = parser.parse_args()
 
-    dca = DCAConfig(timeout=3.0).create()
-    stream = capture(args.config, args.cli, dca)
+    stream = capture(args.config, args.cli, open_capture_card())
     try:
         frames = list(itertools.islice(stream, args.frames))
     finally:
