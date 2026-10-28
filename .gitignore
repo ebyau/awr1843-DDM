@@ -14,7 +14,6 @@
 !/sdk/packages/ti/demo/xwr18xx/mmw/
 
 # Build outputs, prebuilt binaries and generated docs
-docs/doxygen/
 *.bin
 *.xe674
 *.xer4f
