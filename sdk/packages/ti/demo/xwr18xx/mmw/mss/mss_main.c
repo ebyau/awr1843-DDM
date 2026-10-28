@@ -1819,15 +1819,17 @@ static int32_t MmwDemo_dataPathConfig (void)
         }
 
         /* These options assume one TX per chirp: range bias / RX phase is measured
-         * per TX, and the chirp mean (clutter, DC signature) only cancels TX0 when
-         * the other TX are phase-coded. Calibrate in TDM mode. */
+         * per TX, the chirp mean (clutter, DC signature) only cancels TX0 when the
+         * other TX are phase-coded, and the azimuth heat map reads a TDM radar cube.
+         * Calibrate in TDM mode. */
         if ((RFparserOutParams.ddmNumTx != 0U) &&
             ((gMmwMssMCB.objDetCommonCfg.preStartCommonCfg.measureRxChannelBiasCfg.enabled == 1) ||
              (subFrameCfg->objDetDynCfg.dynCfg.staticClutterRemovalCfg.enabled == 1) ||
-             (subFrameCfg->objDetDynCfg.dynCfg.calibDcRangeSigCfg.enabled == 1)))
+             (subFrameCfg->objDetDynCfg.dynCfg.calibDcRangeSigCfg.enabled == 1) ||
+             (subFrameCfg->guiMonSel.rangeAzimuthHeatMap != 0)))
         {
             CLI_write ("Error: ddmCfg does not support measureRangeBiasAndRxChanPhase, "
-                       "clutterRemoval or calibDcRangeSig\n");
+                       "clutterRemoval, calibDcRangeSig or the range-azimuth heat map\n");
             errCode = -1;
             goto exit;
         }

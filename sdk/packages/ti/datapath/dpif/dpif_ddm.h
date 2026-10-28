@@ -8,8 +8,9 @@
  *      With DDM every TX transmits on every chirp. TX k is phase-coded so that
  *      its copy of a target appears k sub-bands above the TX0 copy in the
  *      Doppler spectrum (modulo the spectrum width). With more sub-bands than
- *      TX antennas one sub-band stays empty; the band after the empty one holds
- *      TX0, which resolves the Doppler ambiguity over the full spectrum.
+ *      TX antennas at least one sub-band stays empty, so the TX copies form the
+ *      only run of numTx occupied sub-bands; its first band holds TX0, which
+ *      resolves the Doppler ambiguity over the full spectrum.
  *
  *      All functions are pure and hardware independent.
  */
@@ -67,27 +68,40 @@ static inline void DPIF_ddmFoldDetMatrix(const uint16_t *in, uint16_t *out,
 /**
  *  @b Description
  *  @n
- *      Finds the sub-band holding the TX0 copy of a target: the band after the
- *      weakest (empty) one.
+ *      Finds the sub-band holding the TX0 copy of a target: the first band of
+ *      the numTx cyclically consecutive sub-bands with the most power. With one
+ *      spare sub-band this is the band after the empty one.
  *
  *  @param[in]  bandPower   Target power in each sub-band at the folded Doppler bin
  *  @param[in]  numBands    Number of sub-bands
+ *  @param[in]  numTx       Number of DDM TX antennas, less than numBands
  *
  *  @retval     Sub-band index of TX0, 0 .. numBands-1
  */
-static inline uint32_t DPIF_ddmTx0Band(const float *bandPower, uint32_t numBands)
+static inline uint32_t DPIF_ddmTx0Band(const float *bandPower, uint32_t numBands, uint32_t numTx)
 {
-    uint32_t emptyBand = 0U;
-    uint32_t bandIdx;
+    uint32_t bestBand = 0U;
+    float    bestPower = -1.0f;
+    uint32_t startBand;
+    uint32_t txIdx;
 
-    for (bandIdx = 1U; bandIdx < numBands; bandIdx++)
+    for (startBand = 0U; startBand < numBands; startBand++)
     {
-        if (bandPower[bandIdx] < bandPower[emptyBand])
+        float    power = 0.0f;
+        uint32_t band = startBand;
+
+        for (txIdx = 0U; txIdx < numTx; txIdx++)
         {
-            emptyBand = bandIdx;
+            power += bandPower[band];
+            band = (band + 1U == numBands) ? 0U : band + 1U;
+        }
+        if (power > bestPower)
+        {
+            bestPower = power;
+            bestBand = startBand;
         }
     }
-    return (emptyBand + 1U) % numBands;
+    return bestBand;
 }
 
 /**

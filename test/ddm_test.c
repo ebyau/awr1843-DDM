@@ -92,7 +92,7 @@ static int32_t process(double complex virtualAnt[NUM_TX][NUM_RX])
             bandPower[b] += (float)pow(cabs(spectrum[rx][peak + b * BAND_WIDTH]), 2);
         }
     }
-    uint32_t tx0Band = DPIF_ddmTx0Band(bandPower, NUM_BANDS);
+    uint32_t tx0Band = DPIF_ddmTx0Band(bandPower, NUM_BANDS, NUM_TX);
 
     for (uint32_t tx = 0U; tx < NUM_TX; tx++)
     {
@@ -104,6 +104,40 @@ static int32_t process(double complex virtualAnt[NUM_TX][NUM_RX])
     }
     int32_t bin = (int32_t)(peak + BAND_WIDTH * tx0Band);
     return (bin >= (int32_t)(NUM_CHIRPS / 2U)) ? bin - (int32_t)NUM_CHIRPS : bin;
+}
+
+/* TX0 band search for other band counts: numTx occupied bands among numBands,
+ * starting at every possible band, with the spare bands at noise level. */
+static uint32_t checkTx0BandSearch(void)
+{
+    static const uint32_t layouts[][2] = {{2U, 4U}, {2U, 8U}, {3U, 8U}, {3U, 16U}};
+    uint32_t failures = 0U;
+
+    for (uint32_t i = 0U; i < sizeof(layouts) / sizeof(layouts[0]); i++)
+    {
+        uint32_t numTx = layouts[i][0];
+        uint32_t numBands = layouts[i][1];
+
+        for (uint32_t tx0Band = 0U; tx0Band < numBands; tx0Band++)
+        {
+            float bandPower[DPIF_DDM_MAX_BANDS];
+
+            for (uint32_t b = 0U; b < numBands; b++)
+            {
+                bandPower[b] = 0.01f * (float)rand() / (float)RAND_MAX;
+            }
+            for (uint32_t tx = 0U; tx < numTx; tx++)
+            {
+                bandPower[DPIF_ddmTxBand(tx0Band, tx, numBands)] = 1.0f + 0.5f * (float)rand() / (float)RAND_MAX;
+            }
+            if (DPIF_ddmTx0Band(bandPower, numBands, numTx) != tx0Band)
+            {
+                failures++;
+                printf("FAIL band search: %u TX, %u bands, TX0 in band %u\n", numTx, numBands, tx0Band);
+            }
+        }
+    }
+    return failures;
 }
 
 static double wrap(double a)
@@ -162,5 +196,9 @@ int main(void)
     }
     printf("%u cases: %u disambiguation failures, %u off by one bin; worst virtual-array phase error %.2f deg\n",
            cases, failures, adjacent, worstPhaseErr * 180.0 / M_PI);
+
+    uint32_t searchFailures = checkTx0BandSearch();
+    printf("TX0 band search, 2-3 TX in 4-16 bands: %u failures\n", searchFailures);
+    failures += searchFailures;
     return (failures == 0U && worstPhaseErr < 5.0 * M_PI / 180.0) ? 0 : 1;
 }

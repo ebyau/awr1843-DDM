@@ -2265,7 +2265,7 @@ static void AoAProcHWA_ddmVirtualArray
         }
     }
 
-    tx0Band = DPIF_ddmTx0Band(bandPower, numBands);
+    tx0Band = DPIF_ddmTx0Band(bandPower, numBands, params->numTxAntennas);
     for (tx = 0U; tx < params->numTxAntennas; tx++)
     {
         memcpy(&buf[tx * numRx], &bands[DPIF_ddmTxBand(tx0Band, tx, numBands) * numRx],
