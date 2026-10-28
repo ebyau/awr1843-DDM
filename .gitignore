@@ -30,3 +30,16 @@ docs/doxygen/
 *.d
 obj_*/
 lib/
+
+# Project build environment edits
+!/sdk/packages/scripts/
+/sdk/packages/scripts/*
+!/sdk/packages/scripts/unix/
+/sdk/packages/scripts/unix/*
+!/sdk/packages/scripts/unix/setenv.sh
+/out/
+build_baseline.log
+mmw_configPkg_*/
+
+# Python bytecode
+__pycache__/
