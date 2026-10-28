@@ -92,6 +92,8 @@ def read_frame(data: serial.Serial) -> Frame:
     body = data.read(total_len - HEADER.size)
     if len(body) != total_len - HEADER.size:
         raise TimeoutError("truncated frame")
+    if MAGIC in body:
+        raise FrameError(f"frame {frame_no}: next frame starts inside this one; bytes were dropped")
 
     tlvs: dict[int, bytes] = {}
     offset = 0

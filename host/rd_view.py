@@ -15,6 +15,7 @@ import contextlib
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -27,6 +28,7 @@ from matplotlib.image import AxesImage
 from mmw_host import Frame, FrameError, range_axis, read_frame, send_config
 
 TLV_RANGE_DOPPLER = 5
+SNAPSHOT_TIMEOUT_S = 15.0
 Q8_TO_DB = 20 * np.log10(2) / 2**8  # heat map values are log2 magnitude in Q8
 DYNAMIC_RANGE_DB = 40.0
 
@@ -115,11 +117,16 @@ def main() -> int:
         data.reset_input_buffer()
         reader = threading.Thread(target=read_frames, args=(data, latest, stop), daemon=True)
         reader.start()
+        deadline = time.monotonic() + SNAPSHOT_TIMEOUT_S
         try:
             while args.snapshot is not None or plt.fignum_exists(fig.number):
                 try:
                     frame = latest.get(timeout=0.05) if args.snapshot else latest.get_nowait()
                 except queue.Empty:
+                    if not reader.is_alive():
+                        raise RuntimeError("data port reader stopped; see the error above") from None
+                    if args.snapshot is not None and time.monotonic() > deadline:
+                        raise TimeoutError(f"no frame within {SNAPSHOT_TIMEOUT_S:.0f} s") from None
                     if args.snapshot is None:
                         plt.pause(0.05)
                     continue
@@ -140,8 +147,8 @@ def main() -> int:
                 plt.pause(0.05)
         finally:
             stop.set()
-            reader.join()
             cli.write(b"sensorStop\n")
+            reader.join(timeout=5)
     return 0
 
 
