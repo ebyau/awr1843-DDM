@@ -219,16 +219,18 @@ Frames that arrive corrupted (dropped UART bytes) are skipped with a message on 
 ## Tests
 
 ```sh
-make -C test
+make -C test       # firmware math and parser (C)
+uv run pytest      # host frame decoding (Python)
 ```
 
-This builds two host programs with `gcc` and runs them. `ddm_test` needs only
+`make -C test` builds two host programs with `gcc` and runs them. `ddm_test` needs only
 `dpif_ddm.h`; `rfparser_test` also needs SDK headers from `ti/common`, `ti/control` and
 `ti/utils`, so populate `sdk/` first.
 
 | Test | What it checks |
 |---|---|
 | `ddm_test` | Simulates 3 TX × 4 RX DDM chirps (firmware phase codes including the IF phase sign, Hann window, noise) for every Doppler bin from −64 to 63, on and 0.3 bin off the grid, with random antenna phases. Runs `dpif_ddm.h` (fold, empty band, TX mapping) and checks that velocity is recovered within one bin and that the virtual-array phases match the simulated antennas within 5°. |
+| `test_mmw_host.py` (pytest) | Frame decoding in `host/mmw_host.py`: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input, and `range_axis()`. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
 Expected output:
