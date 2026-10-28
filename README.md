@@ -107,6 +107,7 @@ be recorded and decoded on the PC:
 ```sh
 uv run python host/raw_capture.py host/profiles/ddm_aop_raw.cfg --frames 20 --out capture.npz
 uv run python host/ddm_raw.py capture.npz
+uv run python host/ddm_live.py host/profiles/ddm_aop_raw.cfg   # live view; close the window to stop
 ```
 
 See [raw data capture](docs/development.md#raw-data-capture) for the capture card setup.

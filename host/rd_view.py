@@ -22,7 +22,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import serial
 from matplotlib.axes import Axes
-from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.image import AxesImage
 
 from mmw_host import Frame, FrameError, range_axis, read_frame, send_config
@@ -32,9 +31,7 @@ SNAPSHOT_TIMEOUT_S = 15.0
 Q8_TO_DB = 20 * np.log10(2) / 2**8  # heat map values are log2 magnitude in Q8
 DYNAMIC_RANGE_DB = 40.0
 
-# Sequential blue ramp, light (weak) to dark (strong).
-CMAP = LinearSegmentedColormap.from_list(
-    "seq_blue", ["#f4f8fd", "#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
+CMAP = "viridis"  # perceptually uniform, dark (weak) to yellow (strong); as in the xwr demo
 INK = "#1f2933"
 MUTED = "#6b7785"
 
@@ -70,7 +67,8 @@ def draw_axes(ax: Axes, db: np.ndarray, range_step: float, bands: int) -> AxesIm
 
     if bands > 0:
         for band in range(1, bands):
-            ax.axvline(band * width - shift - 0.5, color=INK, linewidth=1, linestyle=(0, (4, 3)))
+            ax.axvline(band * width - shift - 0.5, color="white", alpha=0.7, linewidth=1,
+                       linestyle=(0, (4, 3)))
         top = ax.secondary_xaxis("top")
         top.set_xticks([b * width for b in range(bands)],
                        [f"sub-band {b}" for b in range(bands)], color=MUTED)

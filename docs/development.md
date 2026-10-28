@@ -21,6 +21,7 @@ host/                     Python host tools
   ddm_check.py              level per Doppler sub-band at the strongest range bin
   raw_capture.py            raw ADC capture through a DCA1000EVM (uses xwr)
   ddm_raw.py                DDM decoding of raw captures, independent of the firmware
+  ddm_live.py               live raw-data view: raw and decoded range-Doppler, top view
   profiles/                 DDM configuration files
 test/                     host unit tests in C (Makefile, ddm_test.c, rfparser_test.c, stubs/)
 images/                   figures used by the documentation
@@ -228,11 +229,13 @@ card driver from [xwr](https://github.com/RadarML/xwr); `ddm_raw.py` decodes the
 ```sh
 uv run python host/raw_capture.py host/profiles/ddm_aop_raw.cfg --frames 20 --out capture.npz
 uv run python host/ddm_raw.py capture.npz --snapshot raw-map.png
+uv run python host/ddm_live.py host/profiles/ddm_aop_raw.cfg --remove-static
 ```
 
 | Tool | Does | Options |
 |---|---|---|
 | `raw_capture.py` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. The configuration needs complex ADC output and `lvdsStreamCfg -1 0 1 0`; `ddm_aop_raw.cfg` is `ddm_aop.cfg` with these set and only the point cloud on the UART data port. | `--frames N` (default 50), `--out FILE.npz`, `--cli PORT` |
+| `ddm_live.py` | Live three-panel view: the raw range-Doppler map with one copy per TX, the range-velocity map after DDM separates the copies (cells 15 dB above noise, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--bands N`, `--tx N`, `--cli PORT` |
 | `ddm_raw.py` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map with sub-band markers, and for the strongest targets on the folded map beyond 0.25 m: range, unambiguous velocity, TX0 sub-band, level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--bands N` (default 4), `--tx N` (default 3), `--snapshot FILE.png` |
 
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger

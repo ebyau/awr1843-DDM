@@ -38,12 +38,27 @@ def chirp_axes(cfg: dict[str, list[str]], num_chirps: int) -> tuple[float, float
     return range_step, velocity_step
 
 
+def doppler_spectrum(frames: np.ndarray) -> np.ndarray:
+    """[..., chirp, rx, sample] -> complex [..., Doppler, rx, range] (Hann windows)."""
+    num_chirps, num_samples = frames.shape[-3], frames.shape[-1]
+    spectrum = np.fft.fft(frames * np.hanning(num_samples), axis=-1)
+    return np.fft.fft(spectrum * np.hanning(num_chirps)[:, None, None], axis=-3)
+
+
 def range_doppler_power(frames: np.ndarray) -> np.ndarray:
     """[frame, chirp, rx, sample] -> power [range, Doppler], summed over RX, mean over frames."""
-    num_chirps, num_samples = frames.shape[1], frames.shape[3]
-    spectrum = np.fft.fft(frames * np.hanning(num_samples), axis=3)
-    spectrum = np.fft.fft(spectrum * np.hanning(num_chirps)[:, None, None], axis=1)
-    return (np.abs(spectrum) ** 2).sum(axis=2).mean(axis=0).T
+    return (np.abs(doppler_spectrum(frames)) ** 2).sum(axis=2).mean(axis=0).T
+
+
+def remove_static(frames: np.ndarray, bands: int) -> np.ndarray:
+    """Subtracts each chirp slot's mean over the loops of a frame [..., chirp, rx, sample].
+
+    This removes the Doppler bins that are multiples of the sub-band width, which hold
+    every TX copy of a static target.
+    """
+    shape = frames.shape
+    slots = frames.reshape(*shape[:-3], shape[-3] // bands, bands, *shape[-2:])
+    return (slots - slots.mean(axis=-4, keepdims=True)).reshape(shape)
 
 
 def fold(power: np.ndarray, bands: int) -> np.ndarray:
@@ -69,10 +84,28 @@ def find_targets(folded_db: np.ndarray, min_range_bin: int = 0) -> list[tuple[in
     return [tuple(cells[i]) for i in order]
 
 
-def tx0_band(band_power: np.ndarray, num_tx: int) -> int:
-    """First band of the strongest run of num_tx cyclically consecutive bands."""
-    runs = sum(np.roll(band_power, -k) for k in range(num_tx))
-    return int(np.argmax(runs))
+def tx0_band(band_power: np.ndarray, num_tx: int) -> np.ndarray:
+    """First band of the strongest run of num_tx cyclically consecutive bands (axis 0)."""
+    runs = sum(np.roll(band_power, -k, axis=0) for k in range(num_tx))
+    return np.argmax(runs, axis=0)
+
+
+def ddm_virtual_array(spectrum: np.ndarray, bands: int, num_tx: int) -> tuple[np.ndarray, np.ndarray]:
+    """Separates the TX copies of every cell of one frame's spectrum [Doppler, rx, range].
+
+    Returns the virtual array [folded bin, range, tx, rx] and TX0's unfolded Doppler bin
+    [folded bin, range].
+    """
+    num_doppler, _, num_range = spectrum.shape
+    width = num_doppler // bands
+    power = (np.abs(spectrum) ** 2).sum(axis=1).reshape(bands, width, num_range)
+    tx0 = tx0_band(power, num_tx)
+    folded = np.arange(width)[:, None]
+    by_range = spectrum.transpose(0, 2, 1)  # [Doppler, range, rx]
+    cells = np.arange(num_range)
+    virtual = np.stack([by_range[folded + width * ((tx0 + k) % bands), cells]
+                        for k in range(num_tx)], axis=2)
+    return virtual, folded + width * tx0
 
 
 def signed_doppler_bin(folded_bin: int, tx0: int, width: int, num_chirps: int) -> int:
@@ -102,7 +135,7 @@ def main() -> int:
     min_range_bin = int(np.ceil(MIN_RANGE_M / range_step))
     for range_bin, folded_bin in find_targets(fold(power, args.bands), min_range_bin):
         band_power = power[range_bin, folded_bin::width]
-        tx0 = tx0_band(band_power, args.tx)
+        tx0 = int(tx0_band(band_power, args.tx))
         tx_bands = [(tx0 + k) % args.bands for k in range(args.tx)]
         spare = np.delete(band_power, tx_bands)
         margin_db = 10 * np.log10(band_power[tx_bands].min() / spare.mean())
