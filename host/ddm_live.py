@@ -26,6 +26,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.animation import FuncAnimation
+from matplotlib.artist import Artist
 from matplotlib.image import AxesImage
 
 from ddm_raw import DETECTION_DB, chirp_axes, ddm_virtual_array, doppler_spectrum, remove_static
@@ -37,6 +39,7 @@ AZIMUTH_BINS = 128
 TOP_VIEW_PIXELS = 256  # along y; x has twice as many
 GAMMA = 0.5
 PCLIP = 0.1
+POLL_MS = 10
 
 
 def decode(frame: np.ndarray, bands: int, num_tx: int,
@@ -56,8 +59,10 @@ def decode(frame: np.ndarray, bands: int, num_tx: int,
     range_bin = np.broadcast_to(np.arange(raw.shape[0]), cell_power.shape)
     velocity = np.zeros_like(raw)
     velocity[range_bin[detected], tx0_bin[detected]] = cell_power[detected]
-    azimuth = np.abs(np.fft.fftshift(np.fft.fft(virtual, AZIMUTH_BINS, axis=2), axes=2)) ** 2
-    azimuth = (azimuth * detected[:, :, None, None]).sum(axis=(0, 3))
+    # Angle FFT of the detected cells only: the whole cube would cost ~100x more.
+    spectra = np.fft.fftshift(np.fft.fft(virtual[detected], AZIMUTH_BINS, axis=1), axes=1)
+    azimuth = np.zeros((raw.shape[0], AZIMUTH_BINS))
+    np.add.at(azimuth, range_bin[detected], (np.abs(spectra) ** 2).sum(axis=2))
     return raw, np.fft.fftshift(velocity, axes=1), azimuth
 
 
@@ -87,7 +92,6 @@ def show(image: AxesImage, power: np.ndarray, pclip: float = PCLIP, gamma: float
     low, high = np.nanpercentile(values, [pclip, 100 - pclip])
     image.set_data(values)
     image.set_clim(low, max(high, low + 1e-9))
-
 
 
 def read_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray], stop: threading.Event) -> None:
@@ -132,26 +136,34 @@ def main() -> int:
                               extent=(-max_range, max_range, 0, max_range))
     style(ax_top, f"Top view ({num_tx}-TX virtual array)", "x (m)", "y (m)")
 
+    # Blitting redraws only these artists; the band lines go last to stay on top.
+    artists: list[Artist] = [raw_image, vel_image, top_image, *ax_raw.lines]
     latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
     stop = threading.Event()
     stream = capture(args.config, args.cli, open_capture_card())
     reader = threading.Thread(target=read_frames, args=(stream, latest, stop), daemon=True)
+
+    def update(_: int) -> list[Artist]:
+        try:
+            frame = latest.get_nowait()
+        except queue.Empty:
+            if not reader.is_alive():
+                plt.close(fig)
+            return []  # nothing new to redraw
+        raw, velocity, azimuth = decode(frame, bands, num_tx, static_loop)
+        show(raw_image, centre_bands(raw, bands))
+        show(vel_image, velocity, pclip=0)
+        # Linear amplitude, as in the xwr demo: the wide beam's sidelobes stay dark.
+        show(top_image, np.where(inside, azimuth[range_bin, azimuth_bin], np.nan), pclip=0, gamma=1)
+        return artists
+
     reader.start()
     try:
-        while plt.fignum_exists(fig.number):
-            try:
-                frame = latest.get_nowait()
-            except queue.Empty:
-                if not reader.is_alive():
-                    raise RuntimeError("capture stopped; see the error above") from None
-                plt.pause(0.02)
-                continue
-            raw, velocity, azimuth = decode(frame, bands, num_tx, static_loop)
-            show(raw_image, centre_bands(raw, bands))
-            show(vel_image, velocity, pclip=0)
-            # Linear amplitude, as in the xwr demo: the wide beam's sidelobes stay dark.
-            show(top_image, np.where(inside, azimuth[range_bin, azimuth_bin], np.nan), pclip=0, gamma=1)
-            plt.pause(0.02)
+        # Poll often: the timer waits its interval after each update, not from its start.
+        _animation = FuncAnimation(fig, update, interval=POLL_MS, blit=True, cache_frame_data=False)
+        plt.show()
+        if not reader.is_alive():
+            raise RuntimeError("capture stopped; see the error above")
     finally:
         stop.set()
         reader.join(timeout=5)

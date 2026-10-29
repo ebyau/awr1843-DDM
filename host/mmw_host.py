@@ -108,6 +108,8 @@ def send_config(cli: serial.Serial, cfg: Path) -> None:
             continue
         cli.write(f"{cmd}\n".encode())
         reply = cli.read_until(b"mmwDemo:/>").decode(errors="replace")
+        if not reply:
+            raise TimeoutError(f"no reply to '{cmd}' on {cli.port}; reset the radar (NRST or power cycle)")
         if "Done" not in reply and cmd != "sensorStop":
             raise RuntimeError(f"'{cmd}' failed:\n{reply.strip()}")
         time.sleep(0.01)
