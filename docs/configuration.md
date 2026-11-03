@@ -68,7 +68,7 @@ DDM is also only available in the AOP image (`./build.sh`); the non-AOP image
 
 ## Worked example: converting a TDM profile
 
-`host/profiles/ddm_aop.cfg` is TI's `profile_3d_aop.cfg` (in
+`profiles/points.toml` renders to TI's `profile_3d_aop.cfg` (in
 `sdk/packages/ti/demo/xwr18xx/mmw/profiles/`) with these changes:
 
 ```diff
@@ -109,19 +109,92 @@ in TI's profile, so they need no change.
 To run the same scene in TDM for comparison, send TI's profile to the same firmware:
 
 ```sh
-uv run python host/mmw_host.py sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg --frames 20
+uv run ddm points profiles/tdm.toml --frames 20
 ```
+
+`profiles/tdm.toml` is TI's `profile_3d_aop.cfg` with the noise profile output off; TI's file
+itself also works.
+
+## Profiles
+
+The host tools take either a TI `.cfg` file or a TOML profile. A profile describes the radar in a
+few lines, with units in the key names, and is rendered to `.cfg` text when a command runs
+(rendered files are not stored). `ddm cfg PROFILE` checks it, logs the derived numbers (chirp
+period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix
+size) and prints the `.cfg` text; `-o FILE` writes it to a file.
+
+```toml
+extends = "points.toml"        # optional: start from another profile (one level)
+description = "Shown as % comments at the top of the .cfg"
+
+[chirp]                        # profileCfg
+start_ghz = 77
+idle_us = 7
+adc_start_us = 3
+ramp_end_us = 39
+slope_mhz_per_us = 100
+tx_start_us = 1
+samples = 256
+sample_rate_ksps = 7200
+rx_gain_db = 30
+
+[mimo]
+tx = [0, 1, 2]                 # channelCfg TX and RX antennas
+rx = [0, 1, 2, 3]
+bands = 4                      # DDM sub-bands (ddmCfg)
+tdm = false                    # true: TI's TDM, one chirp per TX, no ddmCfg
+
+[frame]
+loops = 32
+period_ms = 100
+
+[cfar]
+range_m = [0.25, 15]           # cfarFovCfg range window
+# doppler_mps = [-7.06, 12]    # default: the full unambiguous velocity + 2.5 %
+
+[output]
+point_cloud = true             # guiMonitor
+range_profile = true
+stats = true
+heatmap = false                # range-Doppler heat map
+raw_lvds = false               # ADC samples to a DCA1000EVM (lvdsStreamCfg -1 0 1 0)
+
+[extra]
+lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones or are added
+```
+
+With `extends`, each table of the profile updates the parent's table key by key. The commands
+the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take
+the values of TI's `profile_3d_aop.cfg`; a line in `[extra]` replaces every generated line of
+the same command. `[chirp]` also takes `tx_power_backoff`, `tx_phase_shifter`, `hpf1_corner` and
+`hpf2_corner` (default 0).
+
+Every command checks the configuration against these limits. For a TOML profile a violation is
+an error; for a `.cfg` file it is a warning.
+
+| Limit | Why |
+|---|---|
+| DDM: `bands` divides 64, and number of TX < `bands` ≤ 16 | Phase step in whole phase shifter steps (see [`ddmCfg`](#ddmcfg)) |
+| DDM: at least 2 TX, contiguous from TX0 | Phase codes are assigned by TX index |
+| At most 32 chirps per loop | Chirp definitions per frame loop |
+| Range bins × (Doppler bins / `bands`) × 2 B ≤ 32 KB | CFAR detection matrix in the hardware accelerator |
+| ADC start + samples / sample rate ≤ ramp end | Sampling must end before the ramp does |
+| Chirps per frame × chirp period < frame period | The chirps must fit in the frame |
+| Heat map bytes × 10 / 921600 baud < frame period | The range-Doppler heat map must leave the UART before the next frame |
+| Chirp within 76–81 GHz | RF band of the device |
 
 ## Shipped profiles
 
-All are in `host/profiles/` and use DDM with 3 TX and 4 sub-bands.
+All are in `profiles/` and use the chirp of TI's `profile_3d_aop.cfg` (256 range bins of
+0.042 m, CFAR range window 0.25–15 m) with 3 TX and 4 RX.
 
-| File | Range bins | Frame period | Range-Doppler heat map | Use |
+| File | MIMO | Frame period | Range-Doppler heat map | Use |
 |---|---|---|---|---|
-| `ddm_aop.cfg` | 256 (0.042 m, CFAR range window 0.25–15 m) | 100 ms | off | Point cloud, `mmw_host.py` |
-| `ddm_aop_rdmap.cfg` | 256 | 1 s | on | `rd_view.py`, `ddm_check.py` |
-| `ddm_phase2_aop.cfg` | 128 (CFAR range window 0.25–5 m) | 1 s | on | Shorter-range variant with a 32 KB heat map |
-| `ddm_aop_raw.cfg` | 256 | 100 ms | off | `ddm_aop.cfg` with raw ADC streaming to a DCA1000EVM (`lvdsStreamCfg -1 0 1 0`) and only the point cloud on the data port, for `raw_capture.py` |
+| `points.toml` | DDM, 4 sub-bands | 100 ms | off | Point cloud, `ddm points`; the base of the others |
+| `heatmap.toml` | DDM, 4 sub-bands | 1 s | on | `ddm heatmap`, `ddm bands` |
+| `raw.toml` | DDM, 4 sub-bands | 100 ms | off | `points.toml` with raw ADC streaming to a DCA1000EVM and only the point cloud on the data port, for `ddm capture` and `ddm live` |
+| `raw_fine.toml` | DDM, 4 sub-bands | 50 ms | off | `raw.toml` for slow targets such as hand gestures: 474 µs chirp period (435 µs idle) and 64 chirps, so ±2 m/s unambiguous with 1 m/s sub-bands and 0.063 m/s per bin. Not yet tested on hardware. |
+| `tdm.toml` | TDM: TX0, TX1, TX2 | 100 ms | off | The same chirp without DDM, for comparison |
 
 The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
 921600-baud data port, so profiles that enable it run at 1 frame per second.
@@ -141,5 +214,5 @@ If `sensorStart` fails, the CLI prints the failing step and an error code, for e
 | `Error: rlRfSetMiscConfig retVal=...` / `Error: rlRfSetPhaseShiftConfig retVal=...` | The RF front end rejected the phase shifter configuration |
 | `Error: mmWave Config failed [Error code: ... Subsystem: ...]` | TI mmWave control error (as in the stock demo, now printed on the CLI) |
 
-`host/mmw_host.py` stops at the first command whose reply does not contain `Done` and prints
+The host tools stop at the first command whose reply does not contain `Done` and prints
 that reply.

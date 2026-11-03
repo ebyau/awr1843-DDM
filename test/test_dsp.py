@@ -19,7 +19,7 @@ from ddm.dsp import (
     tx0_band,
 )
 
-RAW_CFG = Path(__file__).parents[1] / "host" / "profiles" / "ddm_aop_raw.cfg"
+RAW_CFG = Path(__file__).parent / "data" / "raw.cfg"
 
 
 def to_iiqq(iq: np.ndarray) -> bytes:

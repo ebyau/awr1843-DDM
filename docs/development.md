@@ -15,17 +15,20 @@ sdk/                      mmWave SDK 03.06.02: modified sources tracked, the res
   packages/ti/demo/                 xwr18xx_mmw demo and demo utilities
   packages/ti/datapath/             processing chain (DPC and DPUs) and data interfaces
   packages/ti/board/                antenna geometry (stock)
-host/                     Python host tools
-  mmw_host.py               send a .cfg file, print a per-frame point-cloud summary;
-                            shared config, serial and frame-decoding helpers
+profiles/                 radar profiles (TOML), rendered to TI .cfg text by the host tools
+host/ddm/                 Python host tools: the ddm command
+  cli.py                    ddm and its subcommands, logging and error handling
+  profile.py                TOML profile -> TI .cfg text, derived numbers
+  limits.py                 hardware-limit checks on a configuration
+  cfg.py                    parse TI .cfg text; range, velocity, DDM and frame parameters
+  radar.py                  serial control: send a configuration, start and stop the sensor
+  frames.py                 decoder for the UART output frames (TLVs)
+  dca.py                    raw ADC capture through a DCA1000EVM (uses xwr)
+  dsp.py                    FFTs, DDM and TDM decoding of raw frames, independent of the firmware
+  view.py                   live views: firmware heat map and raw-data view
   plotting.py               shared plot style and the range-Doppler plot with sub-bands
-  rd_view.py                live range-Doppler heat map with sub-band markers
-  ddm_check.py              level per Doppler sub-band at the strongest range bin
-  raw_capture.py            raw ADC capture through a DCA1000EVM (uses xwr)
-  ddm_raw.py                DDM decoding of raw captures, independent of the firmware
-  ddm_live.py               live raw-data view: raw and decoded range-Doppler, top view
-  profiles/                 DDM configuration files
-test/                     host unit tests in C (Makefile, ddm_test.c, rfparser_test.c, stubs/)
+test/                     unit tests: C (Makefile, ddm_test.c, rfparser_test.c, stubs/) and
+                          Python (test_*.py; data/ holds the .cfg each profile must render to)
 images/                   figures used by the documentation
 docs/                     documentation
 pyproject.toml, uv.lock   Python project and locked dependencies (managed with uv)
@@ -117,14 +120,15 @@ sudo udevadm control --reload-rules
 
 ### Python
 
-Install [uv](https://docs.astral.sh/uv/). The host tools need Python ≥ 3.10, numpy, matplotlib
-and pyserial; `ruff` is a development dependency. Create the environment from `uv.lock`:
+Install [uv](https://docs.astral.sh/uv/). The host tools need Python ≥ 3.11, numpy, matplotlib,
+pyserial and xwr; `pytest` and `ruff` are development dependencies. Create the environment from `uv.lock`:
 
 ```sh
 uv sync
 ```
 
-Always run the tools through `uv run`, which also syncs the environment if needed.
+This installs the host tools as the `ddm` command in the project environment. Always run it
+through `uv run`, which also syncs the environment if needed.
 
 ## Building
 
@@ -200,50 +204,59 @@ All host tools take `--cli` and `--data` to use other ports.
 
 ## Host tools
 
+All tools are subcommands of `ddm`. A `PROFILE` is a TOML profile from `profiles/` or a TI `.cfg`
+file (see [profiles](configuration.md#profiles)); `ddm COMMAND --help` lists the options.
+
 ```sh
-uv run python host/mmw_host.py host/profiles/ddm_aop.cfg --frames 20
-uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg
-uv run python host/ddm_check.py host/profiles/ddm_aop_rdmap.cfg --frames 5
+uv run ddm cfg profiles/points.toml                 # check, show derived numbers, print the .cfg
+uv run ddm points profiles/points.toml --frames 20
+uv run ddm heatmap profiles/heatmap.toml
+uv run ddm bands profiles/heatmap.toml --frames 5
 ```
 
-| Tool | Does | Options |
+| Command | Does | Options |
 |---|---|---|
-| `mmw_host.py` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. Also the library the other tools share: configuration parsing, serial ports and the frame decoder. | `--frames N` (default 10) |
-| `rd_view.py` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
-| `ddm_check.py` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N` (default from `ddmCfg`), `--frames N` |
+| `ddm cfg PROFILE` | Checks the profile against the [hardware limits](configuration.md#profiles), logs the derived numbers (chirp period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text. | `-o FILE` to write the `.cfg` to a file |
+| `ddm points PROFILE` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. | `--frames N` (default 10) |
+| `ddm heatmap PROFILE` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
+| `ddm bands PROFILE` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N` (default from `ddmCfg`), `--frames N` |
+
+Every command takes `-v` (debug messages, including each CLI command sent, and tracebacks) or
+`-q` (warnings and errors only); the hardware commands take `--cli PORT` and, where they read
+the data port, `--data PORT`. Status messages go to stderr and results to stdout. An error
+prints one line and exits with status 1.
 
 For a snapshot on a machine without a display, select a non-interactive matplotlib backend:
 
 ```sh
-MPLBACKEND=Agg uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg --snapshot map.png
+MPLBACKEND=Agg uv run ddm heatmap profiles/heatmap.toml --snapshot map.png
 ```
 
-Frames that arrive corrupted (dropped UART bytes) are skipped with a message on stderr by
-`mmw_host.py` and `rd_view.py`.
+Frames that arrive corrupted (dropped UART bytes) are skipped with a warning.
 
 The sub-band and TX counts are read from the configuration (`ddmCfg` and the TX mask of
 `chirpCfg`), and range and velocity from `profileCfg` and `frameCfg`, so the tools follow a
-changed chirp configuration without extra options. `ddm_raw.py` reads the configuration
+changed chirp configuration without extra options. `ddm decode` reads the configuration
 saved in the capture file.
 
 ### Raw data capture
 
 With the radar mounted on a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card,
 the ADC samples of every chirp can be recorded while the firmware keeps processing them as usual.
-`raw_capture.py` configures the radar from a `.cfg` file and records frames with the capture
-card driver from [xwr](https://github.com/RadarML/xwr); `ddm_raw.py` decodes them in Python.
+`ddm capture` configures the radar and records frames with the capture card driver from
+[xwr](https://github.com/RadarML/xwr); `ddm decode` decodes them in Python.
 
 ```sh
-uv run python host/raw_capture.py host/profiles/ddm_aop_raw.cfg --frames 20 --out capture.npz
-uv run python host/ddm_raw.py capture.npz --snapshot raw-map.png
-uv run python host/ddm_live.py host/profiles/ddm_aop_raw.cfg --remove-static
+uv run ddm capture profiles/raw.toml -n 20      # -> captures/YYYYmmdd-HHMMSS_raw.npz
+uv run ddm decode captures/*_raw.npz --snapshot raw-map.png
+uv run ddm live profiles/raw.toml --remove-static
 ```
 
-| Tool | Does | Options |
+| Command | Does | Options |
 |---|---|---|
-| `raw_capture.py` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. The configuration needs complex ADC output and `lvdsStreamCfg -1 0 1 0`; `ddm_aop_raw.cfg` is `ddm_aop.cfg` with these set and only the point cloud on the UART data port. | `--frames N` (default 50), `--out FILE.npz`, `--cli PORT` |
-| `ddm_live.py` | Live three-panel view: the raw range-Doppler map with one copy per TX, the range-velocity map after DDM separates the copies (cells 15 dB above noise, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
-| `ddm_raw.py` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map with sub-band markers, and for the strongest targets on the folded map beyond the near edge of the CFAR range window (`cfarFovCfg`): range, unambiguous velocity, TX0 sub-band, level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
+| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. The configuration needs complex ADC output and `lvdsStreamCfg -1 0 1 0` (`raw_lvds = true` in a profile). | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
+| `ddm live PROFILE` | Live three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
+| `ddm decode CAPTURE.npz` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map, and the strongest targets beyond the near edge of the CFAR range window (`cfarFovCfg`) with range and velocity. With DDM, targets are found on the folded map and also listed with their TX0 sub-band, the level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
 
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger
 `net.core.rmem_max`, switch settings) is described in xwr's
@@ -254,7 +267,7 @@ flashing the radar.
 
 ```sh
 make -C test       # firmware math and parser (C)
-uv run pytest      # host frame and raw-capture decoding (Python)
+uv run pytest      # host tools (Python)
 ```
 
 `make -C test` builds two host programs with `gcc` and runs them. `ddm_test` needs only
@@ -264,8 +277,10 @@ uv run pytest      # host frame and raw-capture decoding (Python)
 | Test | What it checks |
 |---|---|
 | `ddm_test` | Simulates 3 TX × 4 RX DDM chirps (firmware phase codes including the IF phase sign, Hann window, noise) for every Doppler bin from −64 to 63, on and 0.3 bin off the grid, with random antenna phases. Runs `dpif_ddm.h` (fold, empty band, TX mapping) and checks that velocity is recovered within one bin and that the virtual-array phases match the simulated antennas within 5°. |
-| `test_ddm_raw.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, and simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin. |
-| `test_mmw_host.py` (pytest) | Frame decoding in `host/mmw_host.py`: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input, and `range_axis()`. |
+| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, and the DDM virtual array. |
+| `test_frames.py` (pytest) | UART frame decoding: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input; `.cfg` parsing and `range_axis()`. |
+| `test_profile.py` (pytest) | Each `profiles/*.toml` renders to the commands of its `test/data/*.cfg` fixture; `extends`, `[extra]` lines, rejected typos, the automatic Doppler window, and TOML errors versus `.cfg` warnings. |
+| `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
 Expected output:
@@ -281,8 +296,9 @@ The off-by-one cases are off-grid targets; see the limitations in the [README](.
 `make -C test clean` removes the binaries.
 
 The firmware itself has no automated on-target tests. To check a change on hardware, run
-`host/ddm_check.py` (sub-band separation) and compare `host/mmw_host.py` output with the same
-scene measured in TDM (see [configuration.md](configuration.md#worked-example-converting-a-tdm-profile)).
+`ddm bands` (sub-band separation) and compare `ddm points` output with the same
+scene measured in TDM with `profiles/tdm.toml` (see
+[configuration.md](configuration.md#worked-example-converting-a-tdm-profile)).
 
 ## Linting
 
@@ -323,7 +339,8 @@ Firmware (C):
   the host. Host test code is built with `-Wall -Wextra -Werror`.
 
 Host tools (Python): type hints, `from __future__ import annotations`, standard-library
-`argparse`, and a clean `ruff check`.
+`argparse`, `dataclasses`, `logging` and `tomllib` (no other frameworks), logging rather than
+`print` for status messages in library modules, and a clean `ruff check`.
 
 ## Extending the firmware
 
@@ -344,7 +361,8 @@ Host tools (Python): type hints, `from __future__ import annotations`, standard-
   messages embed source paths, so the margin also shrinks with a longer checkout path. Before
   shrinking the heap, check the `localRam(L2)` line of the heap statistics that `sensorStart`
   prints, for every configuration you need to support.
-- **New host tool.** Put it in `host/`, reuse `send_config()` and `read_frame()` from
-  `mmw_host.py`, add dependencies with `uv add`, and run `uv run ruff check`.
-- **New profile.** Start from `host/profiles/ddm_aop.cfg` and follow the rules in
-  [configuration.md](configuration.md).
+- **New host tool.** Add a subcommand in `host/ddm/cli.py`, reuse `radar.py`, `frames.py` and
+  `dsp.py`, log with `logging.getLogger(__name__)`, add dependencies with `uv add`, and run
+  `uv run ruff check` and `uv run pytest`.
+- **New profile.** Add a TOML file to `profiles/` that `extends` one of the shipped profiles,
+  check it with `ddm cfg`, and follow the rules in [configuration.md](configuration.md).

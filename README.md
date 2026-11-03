@@ -23,7 +23,7 @@ angle of arrival (AoA). To do that it must tell the transmitters apart.
 
 ![Range-Doppler map with DDM: each static target appears three times, in sub-bands 0, 1 and 2; sub-band 3 is empty](images/range-doppler-ddm.png)
 
-*Live range-Doppler map from `host/rd_view.py`. Each static target appears once per TX at the
+*Live range-Doppler map from `ddm heatmap`. Each static target appears once per TX at the
 same range, one sub-band apart; sub-band 3 is empty.*
 
 On static targets, angles measured with DDM match the stock TDM firmware within one angle bin,
@@ -83,8 +83,10 @@ See [flashing](docs/development.md#flashing) if it fails.
 
 ### 4. Run
 
+The host tools are one command, `ddm`, installed into the project environment by uv:
+
 ```sh
-uv run python host/mmw_host.py host/profiles/ddm_aop.cfg --frames 20
+uv run ddm points profiles/points.toml --frames 20
 ```
 
 This sends the configuration on `/dev/ttyUSB0` and prints one line per frame from
@@ -94,7 +96,7 @@ and radial velocity (m/s).
 ### 5. See the sub-bands
 
 ```sh
-uv run python host/rd_view.py host/profiles/ddm_aop_rdmap.cfg
+uv run ddm heatmap profiles/heatmap.toml
 ```
 
 This opens the live range-Doppler map shown above (close the window to stop the radar).
@@ -105,19 +107,31 @@ With a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card, the raw AD
 be recorded and decoded on the PC:
 
 ```sh
-uv run python host/raw_capture.py host/profiles/ddm_aop_raw.cfg --frames 20 --out capture.npz
-uv run python host/ddm_raw.py capture.npz
-uv run python host/ddm_live.py host/profiles/ddm_aop_raw.cfg   # live view; close the window to stop
+uv run ddm capture profiles/raw.toml -n 20 -o capture.npz
+uv run ddm decode capture.npz
+uv run ddm live profiles/raw.toml      # live view; close the window to stop
 ```
 
 See [raw data capture](docs/development.md#raw-data-capture) for the capture card setup.
+
+### 7. Make your own profile
+
+Profiles in `profiles/` are short TOML files: chirp timing, MIMO mode, frame, CFAR window and
+outputs. `ddm cfg` checks one against the hardware limits, prints the resulting range and
+velocity resolution, and writes the TI `.cfg` file the firmware reads:
+
+```sh
+uv run ddm cfg profiles/points.toml -o points.cfg
+```
+
+Every command also accepts TI `.cfg` files. See [profiles](docs/configuration.md#profiles).
 
 ## Documentation
 
 | Page | Contents |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | How DDM works in detail, the MSS/DSS processing chain, buffer layouts, and where each DDM step lives in the code |
-| [docs/configuration.md](docs/configuration.md) | The `ddmCfg` command, rules for DDM chirp configurations, a worked example, and unsupported options |
+| [docs/configuration.md](docs/configuration.md) | The `ddmCfg` command, rules for DDM chirp configurations, the TOML profile format, a worked example, and unsupported options |
 | [docs/development.md](docs/development.md) | Repository layout, toolchain, build variants, flashing details, tests, linting, coding conventions, and how to extend the firmware |
 
 ## Limitations

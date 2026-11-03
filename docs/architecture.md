@@ -35,9 +35,9 @@ The pattern repeats every N chirps, so it is set once with N static chirp defini
 (`chirpCfg 0..N-1`) looped by `frameCfg`; nothing changes at run time. N must divide 64 so that
 the phase step is a whole number of phase shifter steps.
 
-With the shipped profile (`host/profiles/ddm_aop.cfg`, N = 4, 32 loops):
+With the shipped profile (`profiles/points.toml`, N = 4, 32 loops):
 
-| | TDM (stock `profile_3d_aop.cfg`) | DDM (`ddm_aop.cfg`) |
+| | TDM (stock `profile_3d_aop.cfg`, `profiles/tdm.toml`) | DDM (`points.toml`) |
 |---|---|---|
 | TX per chirp | 1 | 3 |
 | Chirps per frame | 96 (3 × 32) | 128 (4 × 32) |
