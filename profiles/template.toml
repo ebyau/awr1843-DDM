@@ -38,7 +38,8 @@ tdm = false               # true = TI's time-division MIMO (one TX per chirp, ba
 [frame]
 loops = 32                # chirps per frame = bands x loops = Doppler bins (DDM); power of 2
 period_ms = 100           # one frame every period_ms; must exceed the chirp burst.
-                          # ddm heatmap / bands raise it to 1000 ms for the 64 KB heat map.
+                          # ddm heatmap / bands raise it (to 1000 ms) if the 64 KB heat map
+                          # would not leave the UART in time (~711 ms).
 
 # ==================== OPTIONAL: on-chip detection ====================
 # Only affects the firmware's point cloud, not raw data. Defaults shown.

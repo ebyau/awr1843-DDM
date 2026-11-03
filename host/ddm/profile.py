@@ -85,7 +85,7 @@ def merge(base: Profile, update: Profile) -> Profile:
     """base with each table updated key by key from update; other values replaced."""
     merged = copy.deepcopy(base)  # callers may change the result; DEFAULTS must not change
     for key, value in update.items():
-        merged[key] = {**base.get(key, {}), **value} if isinstance(value, dict) else value
+        merged[key] = {**merged.get(key, {}), **value} if isinstance(value, dict) else value
     return merged
 
 

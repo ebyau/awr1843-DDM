@@ -218,7 +218,7 @@ uv run ddm bands profiles/template.toml --frames 5
 |---|---|---|
 | `ddm cfg PROFILE` | Checks the profile against the [hardware limits](configuration.md#profiles), logs the derived numbers (chirp period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text. | `--for {capture,points,heatmap}` (outputs of that command; default `capture`), `-o FILE` to write the `.cfg` to a file |
 | `ddm points PROFILE` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. | `--frames N` (default 10) |
-| `ddm heatmap PROFILE` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
+| `ddm heatmap PROFILE` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Adds the heat map to a TOML profile; a `.cfg` file must enable it itself. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
 | `ddm bands PROFILE` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N` (default from `ddmCfg`), `--frames N` |
 
 Every command takes `-v` (debug messages, including each CLI command sent, and tracebacks) or
@@ -248,7 +248,7 @@ the ADC samples of every chirp can be recorded while the firmware keeps processi
 
 ```sh
 uv run ddm capture profiles/template.toml -n 20   # -> captures/YYYYmmdd-HHMMSS_template.npz
-uv run ddm decode captures/*_raw.npz --snapshot raw-map.png
+uv run ddm decode captures/*_template.npz --snapshot raw-map.png
 uv run ddm live profiles/template.toml --remove-static
 ```
 
