@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""TOML profiles: a short description of the chirp, MIMO mode, frame and outputs, rendered
-to the TI .cfg text the firmware reads.
-
-A profile may name a parent with extends = "other.toml" (one level): each of its tables
-updates the parent's table of the same name. See docs/configuration.md for the format.
+"""TOML profiles: a short description of the chirp, MIMO mode and frame, rendered to the TI
+.cfg text the firmware reads. The outputs (point cloud, heat map, raw ADC data) follow from the
+command that sends it. See docs/configuration.md for the format.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import tomllib
@@ -27,7 +26,8 @@ from .cfg import (
     parse_cfg,
     range_axis,
 )
-from .limits import CFAR_MATRIX_MAX_BYTES, check
+from .limits import CFAR_MATRIX_MAX_BYTES, UART_BITS_PER_BYTE, check
+from .radar import DATA_BAUD
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +39,6 @@ DEFAULTS: Profile = {
     "mimo": {"tx": [0, 1, 2], "rx": [0, 1, 2, 3], "bands": 4, "tdm": False},
     "frame": {},
     "cfar": {"range_m": [0.25, 15]},
-    "output": {"point_cloud": True, "range_profile": True, "stats": True, "heatmap": False,
-               "raw_lvds": False},
     "extra": {"lines": []},
 }
 REQUIRED = {
@@ -48,6 +46,13 @@ REQUIRED = {
     "frame": {"loops", "period_ms"},
 }
 OPTIONAL = {"cfar": {"doppler_mps"}}
+# Outputs per use: guiMonitor flags and raw ADC data over LVDS.
+OUTPUTS = {
+    "capture": {"point_cloud": 1, "range_profile": 0, "stats": 0, "heatmap": 0, "raw_lvds": 1},
+    "points": {"point_cloud": 1, "range_profile": 1, "stats": 1, "heatmap": 0, "raw_lvds": 0},
+    "heatmap": {"point_cloud": 1, "range_profile": 1, "stats": 1, "heatmap": 1, "raw_lvds": 0},
+}
+HEATMAP_PERIOD_MS = 1000  # frame period that leaves the UART time for a 64 KB heat map
 DOPPLER_MARGIN = 1.025  # CFAR Doppler window over the unambiguous velocity, rounded up to 0.1 m/s
 
 # Commands the profile format does not describe, as in TI's profile_3d_aop.cfg; [extra] overrides them.
@@ -60,18 +65,9 @@ MONITORS = ["extendedMaxVelocity -1 0", "", "CQRxSatMonitor 0 3 11 121 0", "CQSi
 
 
 def read(path: Path) -> Profile:
-    """A TOML profile with its parent merged in and defaults filled; raises ValueError if
-    it is malformed."""
+    """A TOML profile with defaults filled; raises ValueError if it is malformed."""
     with path.open("rb") as f:
-        profile = tomllib.load(f)
-    parent_name = profile.pop("extends", None)
-    if parent_name is not None:
-        with (path.parent / parent_name).open("rb") as f:
-            parent = tomllib.load(f)
-        if "extends" in parent:
-            raise ValueError(f"{path}: {parent_name} extends another profile; only one level is allowed")
-        profile = merge(parent, profile)
-    profile = merge(DEFAULTS, profile)
+        profile = merge(DEFAULTS, tomllib.load(f))
     for table, keys in profile.items():
         if table == "description":
             continue
@@ -87,7 +83,7 @@ def read(path: Path) -> Profile:
 
 def merge(base: Profile, update: Profile) -> Profile:
     """base with each table updated key by key from update; other values replaced."""
-    merged = dict(base)
+    merged = copy.deepcopy(base)  # callers may change the result; DEFAULTS must not change
     for key, value in update.items():
         merged[key] = {**base.get(key, {}), **value} if isinstance(value, dict) else value
     return merged
@@ -104,23 +100,33 @@ def mask(indices: list[int]) -> int:
     return sum(1 << i for i in set(indices))
 
 
-def render(profile: Profile, source: str = "") -> str:
-    """The TI .cfg text of a profile from read()."""
-    chirp, mimo, frame, cfar, out = (profile[t] for t in ("chirp", "mimo", "frame", "cfar", "output"))
+def render(profile: Profile, use: str = "capture", source: str = "") -> str:
+    """The TI .cfg text of a profile from read(), with the outputs of a use in OUTPUTS."""
+    chirp, mimo, frame, cfar = (profile[t] for t in ("chirp", "mimo", "frame", "cfar"))
+    out = OUTPUTS[use]
     tx_mask = mask(mimo["tx"])
     # TDM: one chirp per TX, in the listed order. DDM: one chirp per sub-band, all TX on each.
     rows = [1 << tx for tx in mimo["tx"]] if mimo["tdm"] else [tx_mask] * mimo["bands"]
     channel = f"channelCfg {mask(mimo['rx'])} {tx_mask} 0"
     chirps = [f"chirpCfg {i} {i} 0 0 0 0 0 {row}" for i, row in enumerate(rows)]
-    timing = [
-        "profileCfg " + " ".join(fmt(chirp[name]) for name in PROFILE_FIELDS),
-        *chirps,
-        f"frameCfg 0 {len(rows) - 1} {frame['loops']} 0 {fmt(frame['period_ms'])} 1 0",
-    ]
+    profile_cfg = "profileCfg " + " ".join(fmt(chirp[name]) for name in PROFILE_FIELDS)
     ddm = [] if mimo["tdm"] else [f"ddmCfg {mimo['bands']}"]
+
+    def frame_cfg(period_ms: float) -> str:
+        return f"frameCfg 0 {len(rows) - 1} {frame['loops']} 0 {fmt(period_ms)} 1 0"
+
+    radar = parse_cfg("\n".join([channel, profile_cfg, *chirps, frame_cfg(frame["period_ms"]), *ddm]))
+    period_ms = frame["period_ms"]
+    if out["heatmap"]:
+        uart_ms = range_axis(radar)[0] * doppler_bins(radar) * 2 * UART_BITS_PER_BYTE / DATA_BAUD * 1e3
+        if period_ms <= uart_ms:
+            period_ms = max(HEATMAP_PERIOD_MS, math.floor(uart_ms) + 1)
+            log.info("frame period raised from %g to %g ms: the heat map takes %.0f ms on the UART",
+                     frame["period_ms"], period_ms, uart_ms)
+    timing = [profile_cfg, *chirps, frame_cfg(period_ms)]
     doppler = cfar.get("doppler_mps")
     if doppler is None:
-        v = math.ceil(max_velocity(parse_cfg("\n".join([channel, *timing, *ddm]))) * DOPPLER_MARGIN * 10) / 10
+        v = math.ceil(max_velocity(radar) * DOPPLER_MARGIN * 10) / 10
         doppler = [-v, v]
     gui = [out["point_cloud"], out["range_profile"], 0, 0, out["heatmap"], out["stats"]]
 
@@ -161,11 +167,12 @@ def apply_extra(lines: list[str], extra: list[str]) -> list[str]:
     return result + [line for group in by_command.values() for line in group]
 
 
-def load(path: Path) -> tuple[str, Config]:
-    """The .cfg text and parsed commands of a profile: a .toml profile (hardware-limit
-    violations are errors) or a TI .cfg file (violations are logged as warnings)."""
+def load(path: Path, use: str = "capture") -> tuple[str, Config]:
+    """The .cfg text and parsed commands of a profile: a .toml profile rendered for a use in
+    OUTPUTS (hardware-limit violations are errors) or a TI .cfg file, sent as it is
+    (violations are logged as warnings)."""
     if path.suffix == ".toml":
-        text = render(read(path), path.name)
+        text = render(read(path), use, path.name)
         cfg = parse_cfg(text)
         if problems := check(cfg):
             raise ValueError(f"{path}: " + "; ".join(problems))

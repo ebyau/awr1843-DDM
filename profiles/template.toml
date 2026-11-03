@@ -1,10 +1,19 @@
 # Radar profile template. Copy it, change the values under "RADAR", then check the result with
 #   uv run ddm cfg profiles/<name>.toml
 # which prints the range/velocity numbers and stops if a TI hardware limit is broken.
-# Every value below is the shipped raw-capture setting (same as raw.toml).
+# Every ddm command takes the profile and adds the outputs it needs (point cloud, heat map or
+# raw ADC data), so the same profile works for ddm points, heatmap, bands, capture and live.
 description = """
-Template: DDM-MIMO raw capture, 3 TX, 4 sub-bands, 256 range bins, 128 chirps, 10 frames/s.
+DDM-MIMO, 3 TX, 4 sub-bands, 256 range bins, 128 chirps, 10 frames/s.
 """
+
+# Velocity, with chirp period Tc = idle_us + ramp_end_us and wavelength lambda ~ 3.8 mm:
+#   DDM: v_max = lambda / (4 Tc)                 dv = lambda / (2 bands loops Tc)
+#   TDM: v_max = lambda / (4 N_TX Tc)            dv = lambda / (2 N_TX loops Tc)
+# These values: Tc = 46 us -> +-20.6 m/s, 0.32 m/s per bin.
+#
+# Example: slow targets / gestures (+-2 m/s, 0.063 m/s per bin):
+#   idle_us = 435, loops = 16, period_ms = 50
 
 # ============================== RADAR ==============================
 
@@ -23,20 +32,13 @@ tx_start_us = 1           # TX turns on this long after the ramp starts
 tx = [0, 1, 2]            # TX antennas; DDM needs at least 2, contiguous from TX0
 rx = [0, 1, 2, 3]         # RX antennas
 bands = 4                 # DDM Doppler sub-bands (ddmCfg): divides 64, more than the TX count, <= 16
-tdm = false               # true = TI's time-division MIMO instead (one TX per chirp, bands ignored)
+tdm = false               # true = TI's time-division MIMO (one TX per chirp, bands ignored),
+                          # e.g. to compare the same scene with and without DDM
 
 [frame]
 loops = 32                # chirps per frame = bands x loops = Doppler bins (DDM); power of 2
-period_ms = 100           # one frame every period_ms; must exceed the chirp burst
-
-# ============================== OUTPUT ==============================
-
-[output]
-raw_lvds = true           # stream ADC samples to a DCA1000EVM (ddm capture, ddm live)
-point_cloud = true        # on-chip detections on the UART data port (ddm points)
-heatmap = false           # range-Doppler map on the UART: 64 KB/frame, needs period_ms >= 1000
-range_profile = false
-stats = false
+period_ms = 100           # one frame every period_ms; must exceed the chirp burst.
+                          # ddm heatmap / bands raise it to 1000 ms for the 64 KB heat map.
 
 # ==================== OPTIONAL: on-chip detection ====================
 # Only affects the firmware's point cloud, not raw data. Defaults shown.

@@ -86,7 +86,7 @@ See [flashing](docs/development.md#flashing) if it fails.
 The host tools are one command, `ddm`, installed into the project environment by uv:
 
 ```sh
-uv run ddm points profiles/points.toml --frames 20
+uv run ddm points profiles/template.toml --frames 20
 ```
 
 This sends the configuration on `/dev/ttyUSB0` and prints one line per frame from
@@ -96,7 +96,7 @@ and radial velocity (m/s).
 ### 5. See the sub-bands
 
 ```sh
-uv run ddm heatmap profiles/heatmap.toml
+uv run ddm heatmap profiles/template.toml
 ```
 
 This opens the live range-Doppler map shown above (close the window to stop the radar).
@@ -107,9 +107,9 @@ With a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card, the raw AD
 be recorded and decoded on the PC:
 
 ```sh
-uv run ddm capture profiles/raw.toml -n 20 -o capture.npz
+uv run ddm capture profiles/template.toml -n 20 -o capture.npz
 uv run ddm decode capture.npz
-uv run ddm live profiles/raw.toml      # live view; close the window to stop
+uv run ddm live profiles/template.toml # live view; close the window to stop
 ```
 
 Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`. See
@@ -134,24 +134,20 @@ for warnings and errors only, after the command name: `uv run ddm points -v PROF
 
 ### Profiles
 
-A `PROFILE` is a short TOML file in `profiles/` or a TI `.cfg` file; stock TI configuration
-files such as `sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` still work.
+A `PROFILE` is a short TOML file or a TI `.cfg` file. `profiles/template.toml` is the one
+shipped profile: every radar setting with its unit, limit and the formulas for maximum velocity
+and velocity resolution. Each command adds the outputs it needs (point cloud, heat map or raw
+ADC data), so one profile serves all of them. Stock TI configuration files such as
+`sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` still work and are sent as they
+are.
 
-| Profile | Use |
-|---|---|
-| `points.toml` | DDM point cloud; the base of the others |
-| `heatmap.toml` | DDM with the range-Doppler heat map, for `heatmap` and `bands` |
-| `raw.toml` | DDM with raw ADC samples streamed to a DCA1000EVM, for `capture` and `live` |
-| `raw_fine.toml` | `raw.toml` with ±2 m/s and 0.063 m/s resolution, for slow targets such as gestures |
-| `tdm.toml` | The same chirp in TI's TDM-MIMO, for comparison |
-| `template.toml` | Every radar setting with its unit and limit; start here for your own profile |
-
-To make your own, copy the template, edit the radar settings (chirp, MIMO, frame), check it,
-then run it. Every command sends the profile to the radar itself; there is no separate load step.
+To change velocity range or resolution, copy the template, edit it, check it, then run it. Every
+command sends the profile to the radar itself; there is no separate load step.
 
 ```sh
 cp profiles/template.toml profiles/mine.toml     # edit the RADAR section
 uv run ddm cfg profiles/mine.toml                # limits, range/velocity resolution, .cfg text
+uv run ddm cfg profiles/mine.toml --for points   # the .cfg that ddm points would send
 uv run ddm capture profiles/mine.toml            # or live, points, heatmap
 ```
 

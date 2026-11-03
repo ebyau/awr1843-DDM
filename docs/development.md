@@ -208,15 +208,15 @@ All tools are subcommands of `ddm`. A `PROFILE` is a TOML profile from `profiles
 file (see [profiles](configuration.md#profiles)); `ddm COMMAND --help` lists the options.
 
 ```sh
-uv run ddm cfg profiles/points.toml                 # check, show derived numbers, print the .cfg
-uv run ddm points profiles/points.toml --frames 20
-uv run ddm heatmap profiles/heatmap.toml
-uv run ddm bands profiles/heatmap.toml --frames 5
+uv run ddm cfg profiles/template.toml               # check, show derived numbers, print the .cfg
+uv run ddm points profiles/template.toml --frames 20
+uv run ddm heatmap profiles/template.toml
+uv run ddm bands profiles/template.toml --frames 5
 ```
 
 | Command | Does | Options |
 |---|---|---|
-| `ddm cfg PROFILE` | Checks the profile against the [hardware limits](configuration.md#profiles), logs the derived numbers (chirp period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text. | `-o FILE` to write the `.cfg` to a file |
+| `ddm cfg PROFILE` | Checks the profile against the [hardware limits](configuration.md#profiles), logs the derived numbers (chirp period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text. | `--for {capture,points,heatmap}` (outputs of that command; default `capture`), `-o FILE` to write the `.cfg` to a file |
 | `ddm points PROFILE` | Sends the configuration, then prints per frame: frame number, point count, nearest point's (x, y, z) in m and radial velocity in m/s. Sends `sensorStop` on exit. | `--frames N` (default 10) |
 | `ddm heatmap PROFILE` | Live range-Doppler heat map (TLV type 5), Doppler axis shifted by half a sub-band so static targets sit mid-band, sub-band boundaries marked. Needs a profile with the range-Doppler heat map enabled. Close the window to stop. | `--bands N` (default from `ddmCfg`; `0` for no markers), `--snapshot FILE.png` to save one frame and exit |
 | `ddm bands PROFILE` | Prints the peak level of each sub-band at the strongest range bin, relative to the strongest sub-band. With DDM working, the TX sub-bands are within a few dB and the empty one is tens of dB lower. | `--bands N` (default from `ddmCfg`), `--frames N` |
@@ -229,7 +229,7 @@ prints one line and exits with status 1.
 For a snapshot on a machine without a display, select a non-interactive matplotlib backend:
 
 ```sh
-MPLBACKEND=Agg uv run ddm heatmap profiles/heatmap.toml --snapshot map.png
+MPLBACKEND=Agg uv run ddm heatmap profiles/template.toml --snapshot map.png
 ```
 
 Frames that arrive corrupted (dropped UART bytes) are skipped with a warning.
@@ -247,14 +247,14 @@ the ADC samples of every chirp can be recorded while the firmware keeps processi
 [xwr](https://github.com/RadarML/xwr); `ddm decode` decodes them in Python.
 
 ```sh
-uv run ddm capture profiles/raw.toml -n 20      # -> captures/YYYYmmdd-HHMMSS_raw.npz
+uv run ddm capture profiles/template.toml -n 20   # -> captures/YYYYmmdd-HHMMSS_template.npz
 uv run ddm decode captures/*_raw.npz --snapshot raw-map.png
-uv run ddm live profiles/raw.toml --remove-static
+uv run ddm live profiles/template.toml --remove-static
 ```
 
 | Command | Does | Options |
 |---|---|---|
-| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. The configuration needs complex ADC output and `lvdsStreamCfg -1 0 1 0` (`raw_lvds = true` in a profile). | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
+| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. A TOML profile gets raw ADC streaming added; a `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
 | `ddm live PROFILE` | Live three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
 | `ddm decode CAPTURE.npz` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map, and the strongest targets beyond the near edge of the CFAR range window (`cfarFovCfg`) with range and velocity. With DDM, targets are found on the folded map and also listed with their TX0 sub-band, the level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
 
@@ -284,7 +284,7 @@ uv run pytest      # host tools (Python)
 | `ddm_test` | Simulates 3 TX × 4 RX DDM chirps (firmware phase codes including the IF phase sign, Hann window, noise) for every Doppler bin from −64 to 63, on and 0.3 bin off the grid, with random antenna phases. Runs `dpif_ddm.h` (fold, empty band, TX mapping) and checks that velocity is recovered within one bin and that the virtual-array phases match the simulated antennas within 5°. |
 | `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
 | `test_frames.py` (pytest) | UART frame decoding: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input; `.cfg` parsing and `range_axis()`. |
-| `test_profile.py` (pytest) | Each `profiles/*.toml` renders to the commands of its `test/data/*.cfg` fixture; `extends`, `[extra]` lines, rejected typos, the automatic Doppler window, and TOML errors versus `.cfg` warnings. |
+| `test_profile.py` (pytest) | `profiles/template.toml`, rendered for each command and with the gesture and TDM settings, gives the commands of its `test/data/*.cfg` fixture in order; the heat-map frame period, `[extra]` lines, rejected typos, the automatic Doppler window, and TOML errors versus `.cfg` warnings. |
 | `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
@@ -302,7 +302,7 @@ The off-by-one cases are off-grid targets; see the limitations in the [README](.
 
 The firmware itself has no automated on-target tests. To check a change on hardware, run
 `ddm bands` (sub-band separation) and compare `ddm points` output with the same
-scene measured in TDM with `profiles/tdm.toml` (see
+scene measured in TDM (`tdm = true`, or TI's `profile_3d_aop.cfg`; see
 [configuration.md](configuration.md#worked-example-converting-a-tdm-profile)).
 
 ## Linting
@@ -369,5 +369,4 @@ Host tools (Python): type hints, `from __future__ import annotations`, standard-
 - **New host tool.** Add a subcommand in `host/ddm/cli.py`, reuse `radar.py`, `frames.py` and
   `dsp.py`, log with `logging.getLogger(__name__)`, add dependencies with `uv add`, and run
   `uv run ruff check` and `uv run pytest`.
-- **New profile.** Add a TOML file to `profiles/` that `extends` one of the shipped profiles,
-  check it with `ddm cfg`, and follow the rules in [configuration.md](configuration.md).
+- **New profile.** Copy `profiles/template.toml`, check it with `ddm cfg`, and follow the rules in [configuration.md](configuration.md).

@@ -68,7 +68,7 @@ DDM is also only available in the AOP image (`./build.sh`); the non-AOP image
 
 ## Worked example: converting a TDM profile
 
-`profiles/points.toml` renders to TI's `profile_3d_aop.cfg` (in
+`profiles/template.toml`, as sent by `ddm points`, is TI's `profile_3d_aop.cfg` (in
 `sdk/packages/ti/demo/xwr18xx/mmw/profiles/`) with these changes:
 
 ```diff
@@ -109,22 +109,29 @@ in TI's profile, so they need no change.
 To run the same scene in TDM for comparison, send TI's profile to the same firmware:
 
 ```sh
-uv run ddm points profiles/tdm.toml --frames 20
+uv run ddm points sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg --frames 20
 ```
 
-`profiles/tdm.toml` is TI's `profile_3d_aop.cfg` with the noise profile output off; TI's file
-itself also works.
+or set `tdm = true` in a copy of the template (one TX per chirp, same chirp).
 
 ## Profiles
 
 The host tools take either a TI `.cfg` file or a TOML profile. A profile describes the radar in a
 few lines, with units in the key names, and is rendered to `.cfg` text when a command runs
-(rendered files are not stored). `ddm cfg PROFILE` checks it, logs the derived numbers (chirp
-period, frame rate, range and velocity resolution, sub-band span, radar cube and CFAR matrix
-size) and prints the `.cfg` text; `-o FILE` writes it to a file.
+(rendered files are not stored). The outputs come from the command:
+
+| Command | Outputs added to the profile |
+|---|---|
+| `ddm capture`, `ddm live` | Raw ADC data over LVDS to the DCA1000EVM (`lvdsStreamCfg -1 0 1 0`) and the point cloud on the UART |
+| `ddm points` | Point cloud, range profile and statistics on the UART |
+| `ddm heatmap`, `ddm bands` | As `points`, plus the range-Doppler heat map. A frame period too short for the heat map on the UART is raised to 1000 ms (or the minimum needed), with a message. |
+
+`ddm cfg PROFILE` checks a profile, logs the derived numbers (chirp period, frame rate, range and
+velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text;
+`--for {capture,points,heatmap}` selects the outputs (default `capture`) and `-o FILE` writes it
+to a file. TI `.cfg` files are sent as they are.
 
 ```toml
-extends = "points.toml"        # optional: start from another profile (one level)
 description = "Shown as % comments at the top of the .cfg"
 
 [chirp]                        # profileCfg
@@ -152,13 +159,6 @@ period_ms = 100
 range_m = [0.25, 15]           # cfarFovCfg range window (optional, this is the default)
 # doppler_mps = [-7.06, 12]    # default: the full unambiguous velocity + 2.5 %
 
-[output]
-point_cloud = true             # guiMonitor
-range_profile = true
-stats = true
-heatmap = false                # range-Doppler heat map
-raw_lvds = false               # ADC samples to a DCA1000EVM (lvdsStreamCfg -1 0 1 0)
-
 [extra]
 lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones or are added
 ```
@@ -166,8 +166,7 @@ lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones o
 `profiles/template.toml` lists every radar setting with its unit and limit. Only `[chirp]` and
 `[frame]` are required; the other tables have defaults.
 
-With `extends`, each table of the profile updates the parent's table key by key. The commands
-the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take
+The commands the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take
 the values of TI's `profile_3d_aop.cfg`; a line in `[extra]` replaces every generated line of
 the same command. `[chirp]` also takes `tx_power_backoff`, `tx_phase_shifter`, `hpf1_corner` and
 `hpf2_corner` (default 0).
@@ -186,21 +185,25 @@ an error; for a `.cfg` file it is a warning.
 | Heat map bytes × 10 / 921600 baud < frame period | The range-Doppler heat map must leave the UART before the next frame |
 | Chirp within 76–81 GHz | RF band of the device |
 
-## Shipped profiles
+## Velocity range and resolution
 
-All are in `profiles/` and use the chirp of TI's `profile_3d_aop.cfg` (256 range bins of
-0.042 m, CFAR range window 0.25–15 m) with 3 TX and 4 RX.
+With chirp period Tc = `idle_us` + `ramp_end_us` and wavelength λ ≈ 3.8 mm:
 
-| File | MIMO | Frame period | Range-Doppler heat map | Use |
-|---|---|---|---|---|
-| `points.toml` | DDM, 4 sub-bands | 100 ms | off | Point cloud, `ddm points`; the base of the others |
-| `heatmap.toml` | DDM, 4 sub-bands | 1 s | on | `ddm heatmap`, `ddm bands` |
-| `raw.toml` | DDM, 4 sub-bands | 100 ms | off | `points.toml` with raw ADC streaming to a DCA1000EVM and only the point cloud on the data port, for `ddm capture` and `ddm live` |
-| `raw_fine.toml` | DDM, 4 sub-bands | 50 ms | off | `raw.toml` for slow targets such as hand gestures: 474 µs chirp period (435 µs idle) and 64 chirps, so ±2 m/s unambiguous with 1 m/s sub-bands and 0.063 m/s per bin. Not yet tested on hardware. |
-| `tdm.toml` | TDM: TX0, TX1, TX2 | 100 ms | off | The same chirp without DDM, for comparison |
+| | Maximum velocity | Velocity resolution |
+|---|---|---|
+| DDM | λ / (4 · Tc) | λ / (2 · `bands` · `loops` · Tc) |
+| TDM | λ / (4 · N_TX · Tc) | λ / (2 · N_TX · `loops` · Tc) |
+
+Example settings for `profiles/template.toml`:
+
+| Settings | Velocity | Frame period | Use |
+|---|---|---|---|
+| As shipped: `idle_us = 7`, `loops = 32`, `period_ms = 100` | ±20.6 m/s, 0.32 m/s per bin | 100 ms | General use; the chirp of TI's `profile_3d_aop.cfg` |
+| `idle_us = 435`, `loops = 16`, `period_ms = 50` | ±2 m/s, 0.063 m/s per bin (1 m/s sub-bands) | 50 ms | Slow targets such as hand gestures. Not yet tested on hardware. |
+| `tdm = true` | ±6.9 m/s, 0.43 m/s per bin | 100 ms | TI's TDM-MIMO, to compare the same scene without DDM |
 
 The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
-921600-baud data port, so profiles that enable it run at 1 frame per second.
+921600-baud data port, so `ddm heatmap` and `ddm bands` run at 1 frame per second.
 
 ## Errors at `sensorStart`
 
