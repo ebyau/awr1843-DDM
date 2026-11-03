@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Unit tests for frame decoding in host/mmw_host.py. Run: uv run pytest"""
+"""Unit tests for the UART frame decoder and configuration parsing. Run: uv run pytest"""
 
 from __future__ import annotations
 
@@ -8,18 +8,8 @@ import struct
 
 import pytest
 
-from ddm.mmw_host import (
-    HEADER,
-    MAGIC,
-    POINT,
-    TLV_DETECTED_POINTS,
-    TLV_HEADER,
-    FrameError,
-    ddm_params,
-    parse_cfg,
-    range_axis,
-    read_frame,
-)
+from ddm.cfg import ddm_params, parse_cfg, range_axis
+from ddm.frames import HEADER, MAGIC, POINT, TLV_DETECTED_POINTS, TLV_HEADER, FrameError, read_frame
 
 
 class FakePort(io.BytesIO):

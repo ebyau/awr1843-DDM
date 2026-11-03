@@ -6,20 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ddm.ddm_raw import (
-    chirp_axes,
+from ddm.cfg import chirp_axes, min_range_m, parse_cfg, raw_frame_shape
+from ddm.dca import iiqq_to_complex
+from ddm.dsp import (
     ddm_virtual_array,
     doppler_spectrum,
     find_targets,
     fold,
-    min_range_m,
     range_doppler_power,
     remove_static,
     signed_doppler_bin,
     tx0_band,
 )
-from ddm.mmw_host import parse_cfg
-from ddm.raw_capture import iiqq_to_complex, raw_frame_shape
 
 RAW_CFG = Path(__file__).parents[1] / "host" / "profiles" / "ddm_aop_raw.cfg"
 

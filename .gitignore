@@ -48,3 +48,6 @@ __pycache__/
 
 # Screenshots saved in the repository root (figures for the docs go in images/)
 /*.png
+
+# Raw captures written by ddm capture
+/captures/

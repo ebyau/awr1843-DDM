@@ -1,69 +1,99 @@
 # SPDX-License-Identifier: MIT
-"""Live view of raw DDM frames from a DCA1000EVM capture card.
-
-Three panels, updated as frames arrive: the raw range-Doppler map with its TX copies
-in the sub-bands, the range-velocity map after DDM separates the TX copies (full
-unambiguous velocity), and a top-down view from the virtual array. On the AWR1843AOP
-the three TX antennas form the horizontal axis of the virtual array, so the top view
-exists only because DDM separates them. Close the window to stop.
-
-Brightness follows the xwr demo: amplitude raised to GAMMA (linear amplitude in the
-top view), with the colour scale clipped to the PCLIP percentiles, so noise and
-sidelobes stay dark.
-
-Usage: uv run python host/ddm_live.py CONFIG.cfg [--remove-static]
-"""
+"""Live matplotlib views: the firmware's range-Doppler heat map and the raw-data view."""
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import queue
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import serial
 from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
 from matplotlib.image import AxesImage
 
-from .ddm_raw import DETECTION_DB, chirp_axes, ddm_virtual_array, doppler_spectrum, remove_static
-from .mmw_host import add_port_args, ddm_params, load_cfg
-from .plotting import CMAP, centre_bands, draw_axes, style
-from .raw_capture import capture, chirps_per_loop, open_capture_card, raw_frame_shape
+from .cfg import Config, chirp_axes, chirps_per_loop, ddm_params, range_axis, raw_frame_shape
+from .dca import capture, open_capture_card
+from .dsp import AZIMUTH_BINS, decode_frame
+from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, Frame, frames
+from .plotting import CMAP, INK, centre_bands, draw_axes, style
+from .radar import running_radar
 
-AZIMUTH_BINS = 128
+SNAPSHOT_TIMEOUT_S = 15.0
 TOP_VIEW_PIXELS = 256  # along y; x has twice as many
 GAMMA = 0.5
 PCLIP = 0.1
 POLL_MS = 10
 
 
-def decode(frame: np.ndarray, bands: int, num_tx: int,
-           static_loop: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One raw frame [chirp, rx, sample] -> power maps: raw [range, Doppler], decoded
-    velocity [range, Doppler] and azimuth [range, angle].
+def heatmap_to_db(raw: bytes, num_range_bins: int) -> np.ndarray:
+    """Heat map payload -> [range, Doppler] array in dB relative to its peak."""
+    heatmap = np.frombuffer(raw, dtype="<u2").reshape(num_range_bins, -1) * HEATMAP_Q8_TO_DB
+    return heatmap - heatmap.max()
 
-    static_loop, the chirps per loop, removes stationary objects. The decoded maps hold
-    only cells DETECTION_DB above the noise; the others would land at arbitrary
-    velocities and angles.
-    """
-    spectrum = doppler_spectrum(frame if static_loop is None else remove_static(frame, static_loop))
-    raw = (np.abs(spectrum) ** 2).sum(axis=1).T
-    virtual, tx0_bin = ddm_virtual_array(spectrum, bands, num_tx)  # [folded bin, range, ...]
-    cell_power = (np.abs(virtual) ** 2).sum(axis=(2, 3))
-    detected = cell_power > np.median(cell_power) * 10 ** (DETECTION_DB / 10)
-    range_bin = np.broadcast_to(np.arange(raw.shape[0]), cell_power.shape)
-    velocity = np.zeros_like(raw)
-    velocity[range_bin[detected], tx0_bin[detected]] = cell_power[detected]
-    # Angle FFT of the detected cells only: the whole cube would cost ~100x more.
-    spectra = np.fft.fftshift(np.fft.fft(virtual[detected], AZIMUTH_BINS, axis=1), axes=1)
-    azimuth = np.zeros((raw.shape[0], AZIMUTH_BINS))
-    np.add.at(azimuth, range_bin[detected], (np.abs(spectra) ** 2).sum(axis=2))
-    return raw, np.fft.fftshift(velocity, axes=1), azimuth
+
+def read_uart_frames(data: serial.Serial, latest: queue.Queue[Frame], stop: threading.Event) -> None:
+    """Read frames continuously, keeping only the newest, so the UART never overflows
+    while the plot redraws."""
+    while not stop.is_set():
+        with contextlib.suppress(TimeoutError):
+            for frame in frames(data):
+                with contextlib.suppress(queue.Empty):
+                    latest.get_nowait()
+                latest.put(frame)
+                if stop.is_set():
+                    return
+
+
+def heatmap_view(cfg_text: str, cfg: Config, bands: int, cli_port: str, data_port: str,
+                 snapshot: Path | None) -> None:
+    """Live range-Doppler heat map from the firmware, or one frame saved to snapshot."""
+    num_range_bins, range_step = range_axis(cfg)
+    fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
+    image: AxesImage | None = None
+    latest: queue.Queue[Frame] = queue.Queue(maxsize=1)
+    stop = threading.Event()
+
+    with running_radar(cfg_text, cli_port, data_port) as data:
+        reader = threading.Thread(target=read_uart_frames, args=(data, latest, stop), daemon=True)
+        reader.start()
+        deadline = time.monotonic() + SNAPSHOT_TIMEOUT_S
+        try:
+            while snapshot is not None or plt.fignum_exists(fig.number):
+                try:
+                    frame = latest.get(timeout=0.05) if snapshot else latest.get_nowait()
+                except queue.Empty:
+                    if not reader.is_alive():
+                        raise RuntimeError("data port reader stopped; see the error above") from None
+                    if snapshot is not None and time.monotonic() > deadline:
+                        raise TimeoutError(f"no frame within {SNAPSHOT_TIMEOUT_S:.0f} s") from None
+                    if snapshot is None:
+                        plt.pause(0.05)
+                    continue
+                raw = frame.tlvs.get(TLV_RANGE_DOPPLER)
+                if raw is None:
+                    raise RuntimeError("frame has no range-Doppler heat map; enable it in guiMonitor")
+                db = heatmap_to_db(raw, num_range_bins)
+                if image is None:
+                    image = draw_axes(ax, db, range_step, bands, "Range-Doppler map")
+                    fig.colorbar(image, ax=ax, label="Level relative to peak (dB)", shrink=0.8)
+                else:
+                    image.set_data(centre_bands(db, bands))
+                ax.set_title(f"Range-Doppler map, frame {frame.number}", color=INK, loc="left")
+                if snapshot is not None:
+                    fig.savefig(snapshot, dpi=120)
+                    print(f"Saved {snapshot}")
+                    break
+                plt.pause(0.05)
+        finally:
+            stop.set()
+            reader.join(timeout=5)
 
 
 def top_view_lookup(num_range: int, range_step: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -94,7 +124,8 @@ def show(image: AxesImage, power: np.ndarray, pclip: float = PCLIP, gamma: float
     image.set_clim(low, max(high, low + 1e-9))
 
 
-def read_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray], stop: threading.Event) -> None:
+def read_raw_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray],
+                    stop: threading.Event) -> None:
     """Keep only the newest frame so slow plotting never backs up the capture."""
     try:
         for frame in stream:
@@ -107,18 +138,14 @@ def read_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray], s
         stream.close()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("config", type=Path)
-    parser.add_argument("--remove-static", action="store_true", help="hide stationary objects")
-    add_port_args(parser, data=False)
-    args = parser.parse_args()
-
-    cfg = load_cfg(args.config)
+def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> None:
+    """Live raw-data view from the capture card: raw range-Doppler, decoded range-velocity
+    and top view. Brightness follows the xwr demo: amplitude raised to GAMMA (linear in the
+    top view), the colour scale clipped to the PCLIP percentiles."""
     bands, num_tx = ddm_params(cfg)
     if bands <= num_tx:
         raise ValueError("the configuration is not DDM (ddmCfg with more bands than TX)")
-    static_loop = chirps_per_loop(cfg) if args.remove_static else None
+    static_loop = chirps_per_loop(cfg) if hide_static else None
     num_chirps, _, num_range = raw_frame_shape(cfg)
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     max_range = num_range * range_step
@@ -140,8 +167,8 @@ def main() -> int:
     artists: list[Artist] = [raw_image, vel_image, top_image, *ax_raw.lines]
     latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
     stop = threading.Event()
-    stream = capture(args.config, args.cli, open_capture_card())
-    reader = threading.Thread(target=read_frames, args=(stream, latest, stop), daemon=True)
+    stream = capture(cfg_text, cli_port, open_capture_card())
+    reader = threading.Thread(target=read_raw_frames, args=(stream, latest, stop), daemon=True)
 
     def update(_: int) -> list[Artist]:
         try:
@@ -150,7 +177,7 @@ def main() -> int:
             if not reader.is_alive():
                 plt.close(fig)
             return []  # nothing new to redraw
-        raw, velocity, azimuth = decode(frame, bands, num_tx, static_loop)
+        raw, velocity, azimuth = decode_frame(frame, bands, num_tx, static_loop)
         show(raw_image, centre_bands(raw, bands))
         show(vel_image, velocity, pclip=0)
         # Linear amplitude, as in the xwr demo: the wide beam's sidelobes stay dark.
@@ -169,8 +196,3 @@ def main() -> int:
         reader.join(timeout=5)
         if reader.is_alive():
             print("capture did not stop; send sensorStop to the radar before the next run", file=sys.stderr)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
