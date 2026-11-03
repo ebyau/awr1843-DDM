@@ -1,0 +1,35 @@
+# DDM point cloud on the UART data port. The base of the other profiles.
+description = """
+DDM-MIMO, AWR1843AOP: 3 TX on every chirp, 4 Doppler sub-bands (band 3 empty), 128 chirps/frame.
+Doppler FOV must cover the full +-20.6 m/s: CFAR runs on the folded sub-band before disambiguation.
+"""
+
+[chirp]
+start_ghz = 77
+idle_us = 7
+adc_start_us = 3
+ramp_end_us = 39
+slope_mhz_per_us = 100
+tx_start_us = 1
+samples = 256
+sample_rate_ksps = 7200
+rx_gain_db = 30
+
+[mimo]
+tx = [0, 1, 2]
+rx = [0, 1, 2, 3]
+bands = 4
+
+[frame]
+loops = 32
+period_ms = 100
+
+[cfar]
+range_m = [0.25, 15]
+
+[output]
+point_cloud = true
+range_profile = true
+stats = true
+heatmap = false
+raw_lvds = false

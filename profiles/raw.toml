@@ -1,0 +1,11 @@
+# points.toml with raw ADC samples streamed over LVDS to a DCA1000EVM, for ddm capture and ddm live.
+extends = "points.toml"
+description = """
+DDM-MIMO raw capture, AWR1843AOP + DCA1000EVM: points.toml with ADC samples streamed over LVDS
+and only the point cloud on the UART data port.
+"""
+
+[output]
+range_profile = false
+stats = false
+raw_lvds = true

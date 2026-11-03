@@ -1,0 +1,20 @@
+# raw.toml with fine velocity resolution for slow targets such as hand gestures.
+# Not yet tested on hardware.
+extends = "points.toml"
+description = """
+DDM-MIMO raw capture with fine velocity: raw.toml with chirps repeated every 474 us
+(435 us idle), so each of the 4 Doppler sub-bands spans 1 m/s: +-2 m/s unambiguous,
+0.063 m/s per bin. 64 chirps take 30 ms, so the frame period is 50 ms (20 frames/s).
+"""
+
+[chirp]
+idle_us = 435
+
+[frame]
+loops = 16
+period_ms = 50
+
+[output]
+range_profile = false
+stats = false
+raw_lvds = true

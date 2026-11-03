@@ -1,0 +1,12 @@
+# points.toml with the range-Doppler heat map, for ddm heatmap and ddm bands.
+extends = "points.toml"
+description = """
+DDM-MIMO, AWR1843AOP, with the range-Doppler heat map enabled for ddm heatmap and ddm bands.
+The 64 KB map takes ~0.7 s over UART at 921600 baud, so the frame period is 1 s.
+"""
+
+[frame]
+period_ms = 1000
+
+[output]
+heatmap = true

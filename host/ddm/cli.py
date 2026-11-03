@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """ddm: configure the AWR1843AOP DDM-MIMO firmware and decode its output.
 
-Every PROFILE is a TI .cfg file.
+A PROFILE is a TOML profile (profiles/*.toml) or a TI .cfg file, chosen by its suffix.
 """
 
 from __future__ import annotations
@@ -19,17 +19,12 @@ from .cfg import Config, chirp_axes, ddm_params, min_range_m, parse_cfg, range_a
 from .dsp import find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
 from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, frames
 from .plotting import centre_bands
+from .profile import derived, load
 from .radar import CLI_PORT, DATA_PORT, running_radar
 
 log = logging.getLogger(__name__)
 
 CAPTURE_DIR = Path("captures")
-
-
-def load_profile(path: Path) -> tuple[str, Config]:
-    """The .cfg text of a profile and its parsed commands."""
-    text = path.read_text()
-    return text, parse_cfg(text)
 
 
 def require_ddm(cfg: Config) -> tuple[int, int]:
@@ -39,9 +34,21 @@ def require_ddm(cfg: Config) -> tuple[int, int]:
     return bands, num_tx
 
 
+def cmd_cfg(args: argparse.Namespace) -> None:
+    """Check a profile against the hardware limits, log its derived numbers and write its .cfg text."""
+    text, cfg = load(args.profile)
+    for name, value in derived(cfg).items():
+        log.info("%-24s %8.4g", name, value)
+    if args.out is None:
+        sys.stdout.write(text)
+    else:
+        args.out.write_text(text)
+        log.info("wrote %s", args.out)
+
+
 def cmd_points(args: argparse.Namespace) -> None:
     """Configure the radar and print a point-cloud summary per frame."""
-    text, _ = load_profile(args.profile)
+    text, _ = load(args.profile)
     with running_radar(text, args.cli, args.data) as data:
         for frame in itertools.islice(frames(data), args.frames):
             nearest = min(frame.points, key=lambda p: p.x**2 + p.y**2, default=None)
@@ -54,7 +61,7 @@ def cmd_heatmap(args: argparse.Namespace) -> None:
     """Live range-Doppler heat map from the firmware, with the sub-band boundaries marked."""
     from .view import heatmap_view  # matplotlib loads only for the commands that plot
 
-    text, cfg = load_profile(args.profile)
+    text, cfg = load(args.profile)
     bands = ddm_params(cfg)[0] if args.bands is None else args.bands
     heatmap_view(text, cfg, bands, args.cli, args.data, args.snapshot)
 
@@ -72,7 +79,7 @@ def band_levels_db(heatmap: np.ndarray, bands: int) -> np.ndarray:
 
 def cmd_bands(args: argparse.Namespace) -> None:
     """Print the level of each Doppler sub-band at the strongest range bin (static scene)."""
-    text, cfg = load_profile(args.profile)
+    text, cfg = load(args.profile)
     num_range_bins, _ = range_axis(cfg)
     bands = ddm_params(cfg)[0] if args.bands is None else args.bands
     if bands < 2:
@@ -94,7 +101,7 @@ def cmd_capture(args: argparse.Namespace) -> None:
     """Record raw ADC frames through a DCA1000EVM capture card."""
     from .dca import capture, open_capture_card  # xwr loads only for the capture commands
 
-    text, _ = load_profile(args.profile)
+    text, _ = load(args.profile)
     out = args.out or CAPTURE_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{args.profile.stem}.npz"
     stream = capture(text, args.cli, open_capture_card())
     try:
@@ -154,7 +161,7 @@ def cmd_live(args: argparse.Namespace) -> None:
     """Live raw-data view: raw range-Doppler, DDM-decoded range-velocity and top view."""
     from .view import live_view
 
-    text, cfg = load_profile(args.profile)
+    text, cfg = load(args.profile)
     live_view(text, cfg, args.cli, args.remove_static)
 
 
@@ -175,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
                                   description=handler.__doc__)
         sub.set_defaults(handler=handler)
         return sub
+
+    sub = add(cmd_cfg, "cfg", [])
+    sub.add_argument("profile", type=Path, metavar="PROFILE")
+    sub.add_argument("-o", "--out", type=Path, metavar="FILE", help="write the .cfg here (default stdout)")
 
     sub = add(cmd_points, "points", [ports])
     sub.add_argument("profile", type=Path, metavar="PROFILE")
