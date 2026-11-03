@@ -1,0 +1,49 @@
+# Radar profile template. Copy it, change the values under "RADAR", then check the result with
+#   uv run ddm cfg profiles/<name>.toml
+# which prints the range/velocity numbers and stops if a TI hardware limit is broken.
+# Every value below is the shipped raw-capture setting (same as raw.toml).
+description = """
+Template: DDM-MIMO raw capture, 3 TX, 4 sub-bands, 256 range bins, 128 chirps, 10 frames/s.
+"""
+
+# ============================== RADAR ==============================
+
+[chirp]
+start_ghz = 77            # chirp start frequency; the sweep must stay inside 76-81 GHz
+idle_us = 7               # gap before each ramp; chirp period = idle_us + ramp_end_us (sets v_max)
+adc_start_us = 3          # ADC starts this long into the ramp
+ramp_end_us = 39          # ramp length; needs adc_start_us + samples / sample rate <= ramp_end_us
+slope_mhz_per_us = 100    # bandwidth = slope x sampling time; sets range resolution
+samples = 256             # ADC samples per chirp = range bins (range FFT size, power of 2)
+sample_rate_ksps = 7200   # ADC rate; max range = rate x c / (2 x slope)
+rx_gain_db = 30
+tx_start_us = 1           # TX turns on this long after the ramp starts
+
+[mimo]
+tx = [0, 1, 2]            # TX antennas; DDM needs at least 2, contiguous from TX0
+rx = [0, 1, 2, 3]         # RX antennas
+bands = 4                 # DDM Doppler sub-bands (ddmCfg): divides 64, more than the TX count, <= 16
+tdm = false               # true = TI's time-division MIMO instead (one TX per chirp, bands ignored)
+
+[frame]
+loops = 32                # chirps per frame = bands x loops = Doppler bins (DDM); power of 2
+period_ms = 100           # one frame every period_ms; must exceed the chirp burst
+
+# ============================== OUTPUT ==============================
+
+[output]
+raw_lvds = true           # stream ADC samples to a DCA1000EVM (ddm capture, ddm live)
+point_cloud = true        # on-chip detections on the UART data port (ddm points)
+heatmap = false           # range-Doppler map on the UART: 64 KB/frame, needs period_ms >= 1000
+range_profile = false
+stats = false
+
+# ==================== OPTIONAL: on-chip detection ====================
+# Only affects the firmware's point cloud, not raw data. Defaults shown.
+# [cfar]
+# range_m = [0.25, 15]    # detection range window (m)
+# doppler_mps = [-21.2, 21.2]   # detection velocity window; default: the full +-v_max
+
+# Any other TI CLI command, verbatim; it replaces the generated line of the same command.
+# [extra]
+# lines = ["cfarCfg -1 0 2 8 4 3 0 15.0 0"]

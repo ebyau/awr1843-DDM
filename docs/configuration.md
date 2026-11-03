@@ -149,7 +149,7 @@ loops = 32
 period_ms = 100
 
 [cfar]
-range_m = [0.25, 15]           # cfarFovCfg range window
+range_m = [0.25, 15]           # cfarFovCfg range window (optional, this is the default)
 # doppler_mps = [-7.06, 12]    # default: the full unambiguous velocity + 2.5 %
 
 [output]
@@ -162,6 +162,9 @@ raw_lvds = false               # ADC samples to a DCA1000EVM (lvdsStreamCfg -1 0
 [extra]
 lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones or are added
 ```
+
+`profiles/template.toml` lists every radar setting with its unit and limit. Only `[chirp]` and
+`[frame]` are required; the other tables have defaults.
 
 With `extends`, each table of the profile updates the parent's table key by key. The commands
 the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take

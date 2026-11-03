@@ -38,7 +38,7 @@ DEFAULTS: Profile = {
               "hpf1_corner": 0, "hpf2_corner": 0},
     "mimo": {"tx": [0, 1, 2], "rx": [0, 1, 2, 3], "bands": 4, "tdm": False},
     "frame": {},
-    "cfar": {},
+    "cfar": {"range_m": [0.25, 15]},
     "output": {"point_cloud": True, "range_profile": True, "stats": True, "heatmap": False,
                "raw_lvds": False},
     "extra": {"lines": []},
@@ -46,7 +46,6 @@ DEFAULTS: Profile = {
 REQUIRED = {
     "chirp": set(PROFILE_FIELDS) - set(DEFAULTS["chirp"]),
     "frame": {"loops", "period_ms"},
-    "cfar": {"range_m"},
 }
 OPTIONAL = {"cfar": {"doppler_mps"}}
 DOPPLER_MARGIN = 1.025  # CFAR Doppler window over the unambiguous velocity, rounded up to 0.1 m/s

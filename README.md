@@ -144,13 +144,15 @@ files such as `sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` sti
 | `raw.toml` | DDM with raw ADC samples streamed to a DCA1000EVM, for `capture` and `live` |
 | `raw_fine.toml` | `raw.toml` with ±2 m/s and 0.063 m/s resolution, for slow targets such as gestures |
 | `tdm.toml` | The same chirp in TI's TDM-MIMO, for comparison |
+| `template.toml` | Every radar setting with its unit and limit; start here for your own profile |
 
-To make your own, copy or extend a shipped profile, check it, then run it:
+To make your own, copy the template, edit the radar settings (chirp, MIMO, frame), check it,
+then run it. Every command sends the profile to the radar itself; there is no separate load step.
 
 ```sh
-cp profiles/points.toml profiles/mine.toml       # edit: chirp, MIMO, frame, CFAR window, outputs
+cp profiles/template.toml profiles/mine.toml     # edit the RADAR section
 uv run ddm cfg profiles/mine.toml                # limits, range/velocity resolution, .cfg text
-uv run ddm points profiles/mine.toml
+uv run ddm capture profiles/mine.toml            # or live, points, heatmap
 ```
 
 DDM is the default (`[mimo] bands = 4`); set `tdm = true` in `[mimo]` for TI's time-division
