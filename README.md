@@ -81,39 +81,51 @@ Set the SOP switches to flashing mode (SOP0 on, SOP1 off, SOP2 on), unplug and r
 Set the switches back to normal mode (SOP0 on, SOP1 off, SOP2 off) and replug USB again.
 See [flashing](docs/development.md#flashing) if it fails.
 
-### 4. Run
+### 4. Check the profile
 
-The host tools are one command, `ddm`, installed into the project environment by uv:
-
-```sh
-uv run ddm points profiles/template.toml --frames 20
-```
-
-This sends the configuration on `/dev/ttyUSB0` and prints one line per frame from
-`/dev/ttyUSB1`: frame number, number of detected points, and the nearest point's position (m)
-and radial velocity (m/s).
-
-### 5. See the sub-bands
+The host tools are one command, `ddm`, installed into the project environment by uv. Start
+with the shipped profile:
 
 ```sh
-uv run ddm heatmap profiles/template.toml
+uv run ddm cfg profiles/template.toml
 ```
 
-This opens the live range-Doppler map shown above (close the window to stop the radar).
+This checks the profile against the hardware limits and prints its range and velocity
+resolution, maximum velocity and the TI `.cfg` text it sends.
 
-### 6. Capture raw data (optional)
+### 5. Capture and decode raw data
 
-With a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card, the raw ADC samples can
-be recorded and decoded on the PC:
+With the radar on a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card (see
+[raw data capture](docs/development.md#raw-data-capture) for its setup):
 
 ```sh
-uv run ddm capture profiles/template.toml -n 20 -o capture.npz
-uv run ddm decode capture.npz
-uv run ddm live profiles/template.toml # live view; close the window to stop
+uv run ddm capture profiles/template.toml -n 50 -o wave.npz   # 50 frames of ADC samples
+uv run ddm decode wave.npz                                    # targets and range-Doppler map
+uv run ddm live profiles/template.toml                        # live view; close the window to stop
 ```
 
-Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`. See
-[raw data capture](docs/development.md#raw-data-capture) for the capture card setup.
+Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`.
+
+### 6. Learn to work with the data
+
+[docs/raw_data.ipynb](docs/raw_data.ipynb) walks through DDM decoding step by step in plain
+numpy: range and Doppler FFTs, the TX copies in the sub-bands, velocity, the virtual array and
+angle. It runs on a capture or on simulated data:
+
+```sh
+uv run jupyter lab docs/raw_data.ipynb
+```
+
+## On-chip outputs (firmware check)
+
+The firmware also detects targets itself and sends them over the UART data port
+(`/dev/ttyUSB1`); no capture card is needed:
+
+```sh
+uv run ddm points profiles/template.toml --frames 20   # point cloud summary per frame
+uv run ddm heatmap profiles/template.toml              # live range-Doppler map shown above
+uv run ddm bands profiles/template.toml                # level per sub-band (static scene)
+```
 
 ## Host tools
 
@@ -159,6 +171,7 @@ MIMO with one TX per chirp. The tools read the mode from the configuration. See
 
 | Page | Contents |
 |---|---|
+| [docs/raw_data.ipynb](docs/raw_data.ipynb) | Hands-on guide to raw DDM data: FFTs, sub-bands, velocity, virtual array and angle |
 | [docs/architecture.md](docs/architecture.md) | How DDM works in detail, the MSS/DSS processing chain, buffer layouts, and where each DDM step lives in the code |
 | [docs/configuration.md](docs/configuration.md) | The `ddmCfg` command, rules for DDM chirp configurations, the TOML profile format, a worked example, and unsupported options |
 | [docs/development.md](docs/development.md) | Repository layout, toolchain, build variants, flashing details, tests, linting, coding conventions, and how to extend the firmware |
