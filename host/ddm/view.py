@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
-import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -24,6 +24,8 @@ from .dsp import AZIMUTH_BINS, decode_frame
 from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, Frame, frames
 from .plotting import CMAP, INK, centre_bands, draw_axes, style
 from .radar import running_radar
+
+log = logging.getLogger(__name__)
 
 SNAPSHOT_TIMEOUT_S = 15.0
 TOP_VIEW_PIXELS = 256  # along y; x has twice as many
@@ -88,7 +90,7 @@ def heatmap_view(cfg_text: str, cfg: Config, bands: int, cli_port: str, data_por
                 ax.set_title(f"Range-Doppler map, frame {frame.number}", color=INK, loc="left")
                 if snapshot is not None:
                     fig.savefig(snapshot, dpi=120)
-                    print(f"Saved {snapshot}")
+                    log.info("saved %s", snapshot)
                     break
                 plt.pause(0.05)
         finally:
@@ -195,4 +197,4 @@ def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> N
         stop.set()
         reader.join(timeout=5)
         if reader.is_alive():
-            print("capture did not stop; send sensorStop to the radar before the next run", file=sys.stderr)
+            log.warning("capture did not stop; send sensorStop to the radar before the next run")

@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 import serial
+
+log = logging.getLogger(__name__)
 
 CLI_PORT, CLI_BAUD, CLI_TIMEOUT_S = "/dev/ttyUSB0", 115200, 6.0
 DATA_PORT, DATA_BAUD, DATA_TIMEOUT_S = "/dev/ttyUSB1", 921600, 3.0
@@ -20,6 +23,7 @@ def send_config(cli: serial.Serial, cfg_text: str) -> None:
         cmd = line.strip()
         if not cmd or cmd.startswith("%"):
             continue
+        log.debug("> %s", cmd)
         cli.write(f"{cmd}\n".encode())
         reply = cli.read_until(PROMPT).decode(errors="replace")
         if not reply:

@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import struct
-import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import serial
+
+log = logging.getLogger(__name__)
 
 MAGIC = bytes([2, 1, 4, 3, 6, 5, 8, 7])
 HEADER = struct.Struct("<8s8I")  # magic, version, totalPacketLen, platform, frameNumber,
@@ -81,9 +83,9 @@ def read_frame(data: serial.Serial) -> Frame:
 
 
 def frames(data: serial.Serial) -> Iterator[Frame]:
-    """Frames from the data port, skipping corrupted ones with a message on stderr."""
+    """Frames from the data port, skipping (and logging) corrupted ones."""
     while True:
         try:
             yield read_frame(data)
         except FrameError as err:
-            print(f"skipped corrupted frame: {err}", file=sys.stderr)
+            log.warning("skipped corrupted frame: %s", err)

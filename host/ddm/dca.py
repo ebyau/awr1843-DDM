@@ -7,7 +7,7 @@ complex 16-bit samples.
 
 from __future__ import annotations
 
-import sys
+import logging
 from collections.abc import Iterator
 
 import numpy as np
@@ -16,6 +16,8 @@ from xwr.capture import DCA1000EVM
 
 from .cfg import parse_cfg, raw_frame_shape
 from .radar import open_cli, send_config, sensor_stop
+
+log = logging.getLogger(__name__)
 
 CAPTURE_TIMEOUT_S = 3.0  # the stream ends when no data arrives for this long
 
@@ -57,7 +59,7 @@ def capture(cfg_text: str, cli_port: str, dca: DCA1000EVM) -> Iterator[np.ndarra
                 if frame.complete:
                     yield iiqq_to_complex(frame.data, shape)
                 else:
-                    print("skipped incomplete frame", file=sys.stderr)
+                    log.warning("skipped incomplete frame")
         finally:
             sensor_stop(cli)
             dca.stop()

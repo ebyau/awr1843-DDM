@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import logging
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,8 @@ from .dsp import find_targets, fold, range_doppler_power, signed_doppler_bin, tx
 from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, frames
 from .plotting import centre_bands
 from .radar import CLI_PORT, DATA_PORT, running_radar
+
+log = logging.getLogger(__name__)
 
 CAPTURE_DIR = Path("captures")
 
@@ -78,7 +81,7 @@ def cmd_bands(args: argparse.Namespace) -> None:
         for frame in itertools.islice(frames(data), args.frames):
             raw = frame.tlvs.get(TLV_RANGE_DOPPLER)
             if raw is None:
-                print(f"frame {frame.number}: no range-Doppler heatmap TLV")
+                log.warning("frame %d: no range-Doppler heat map TLV", frame.number)
                 continue
             heatmap = np.frombuffer(raw, dtype="<u2").reshape(num_range_bins, -1)
             levels = band_levels_db(heatmap.astype(float), bands)
@@ -101,10 +104,10 @@ def cmd_capture(args: argparse.Namespace) -> None:
     if not captured:
         raise TimeoutError("no frames received; check the LVDS cable and capture card")
     if len(captured) < args.frames:
-        print(f"stream timed out after {len(captured)} of {args.frames} frames", file=sys.stderr)
+        log.warning("stream timed out after %d of %d frames", len(captured), args.frames)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, frames=np.stack(captured), config=text)
-    print(f"Saved {len(captured)} frames of {captured[0].shape} (chirp, rx, sample) to {out}")
+    log.info("saved %d frames of %s (chirp, rx, sample) to %s", len(captured), captured[0].shape, out)
 
 
 def cmd_decode(args: argparse.Namespace) -> None:
@@ -121,7 +124,7 @@ def cmd_decode(args: argparse.Namespace) -> None:
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     power = range_doppler_power(captured)
 
-    print(f"{len(captured)} frames; {range_step:.3f} m and {velocity_step:.3f} m/s per bin")
+    log.info("%d frames; %.3f m and %.3f m/s per bin", len(captured), range_step, velocity_step)
     print(" range(m)  v(m/s)  TX0  " + "  ".join(f"band{b}(dB)" for b in range(bands))
           + "  weakest TX - mean spare (dB)")
     min_range_bin = int(np.ceil(min_range_m(cfg) / range_step))
@@ -142,7 +145,7 @@ def cmd_decode(args: argparse.Namespace) -> None:
     fig.colorbar(image, ax=ax, label="Level relative to peak (dB)", shrink=0.8)
     if args.snapshot is not None:
         fig.savefig(args.snapshot, dpi=120)
-        print(f"Saved {args.snapshot}")
+        log.info("saved %s", args.snapshot)
     else:
         plt.show()
 
@@ -157,14 +160,19 @@ def cmd_live(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ddm", description=__doc__.splitlines()[0])
-    cli_port = argparse.ArgumentParser(add_help=False)
+    common = argparse.ArgumentParser(add_help=False)
+    verbosity = common.add_mutually_exclusive_group()
+    verbosity.add_argument("-v", "--verbose", action="store_true", help="debug messages and tracebacks")
+    verbosity.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
+    cli_port = argparse.ArgumentParser(add_help=False, parents=[common])
     cli_port.add_argument("--cli", default=CLI_PORT, help=f"CLI port (default {CLI_PORT})")
     ports = argparse.ArgumentParser(add_help=False, parents=[cli_port])
     ports.add_argument("--data", default=DATA_PORT, help=f"data port (default {DATA_PORT})")
     commands = parser.add_subparsers(title="commands", required=True, metavar="COMMAND")
 
     def add(handler, name: str, parents: list[argparse.ArgumentParser]) -> argparse.ArgumentParser:
-        sub = commands.add_parser(name, parents=parents, help=handler.__doc__, description=handler.__doc__)
+        sub = commands.add_parser(name, parents=parents or [common], help=handler.__doc__,
+                                  description=handler.__doc__)
         sub.set_defaults(handler=handler)
         return sub
 
@@ -200,7 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    args.handler(args)
+    level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr)
+    try:
+        args.handler(args)
+    # OSError covers TimeoutError, serial.SerialException and missing files.
+    except (ValueError, RuntimeError, OSError) as err:
+        log.error("%s", err, exc_info=args.verbose)
+        return 1
     return 0
 
 
