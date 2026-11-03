@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ddm_raw import (
+from ddm.ddm_raw import (
     chirp_axes,
     ddm_virtual_array,
     doppler_spectrum,
@@ -18,8 +18,8 @@ from ddm_raw import (
     signed_doppler_bin,
     tx0_band,
 )
-from mmw_host import parse_cfg
-from raw_capture import iiqq_to_complex, raw_frame_shape
+from ddm.mmw_host import parse_cfg
+from ddm.raw_capture import iiqq_to_complex, raw_frame_shape
 
 RAW_CFG = Path(__file__).parents[1] / "host" / "profiles" / "ddm_aop_raw.cfg"
 

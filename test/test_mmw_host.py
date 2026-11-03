@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from mmw_host import (
+from ddm.mmw_host import (
     HEADER,
     MAGIC,
     POINT,

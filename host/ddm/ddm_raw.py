@@ -20,8 +20,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mmw_host import SPEED_OF_LIGHT, Config, cfg_args, ddm_params, parse_cfg, range_axis
-from plotting import draw_axes
+from .mmw_host import SPEED_OF_LIGHT, Config, cfg_args, ddm_params, parse_cfg, range_axis
+from .plotting import draw_axes
 
 # Host-side peak picking, a simpler statistic than the firmware's CFAR: changing
 # cfarCfg does not change it.

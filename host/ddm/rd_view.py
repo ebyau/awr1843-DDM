@@ -23,7 +23,7 @@ import numpy as np
 import serial
 from matplotlib.image import AxesImage
 
-from mmw_host import (
+from .mmw_host import (
     HEATMAP_Q8_TO_DB,
     TLV_RANGE_DOPPLER,
     Frame,
@@ -34,7 +34,7 @@ from mmw_host import (
     range_axis,
     running_radar,
 )
-from plotting import INK, centre_bands, draw_axes
+from .plotting import INK, centre_bands, draw_axes
 
 SNAPSHOT_TIMEOUT_S = 15.0
 

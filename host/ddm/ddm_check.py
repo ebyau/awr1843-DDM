@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mmw_host import (
+from .mmw_host import (
     HEATMAP_Q8_TO_DB,
     TLV_RANGE_DOPPLER,
     add_port_args,
@@ -27,7 +27,7 @@ from mmw_host import (
     range_axis,
     running_radar,
 )
-from plotting import centre_bands
+from .plotting import centre_bands
 
 
 def band_levels_db(heatmap: np.ndarray, bands: int) -> np.ndarray:

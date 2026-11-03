@@ -22,7 +22,7 @@ import serial
 from xwr import DCAConfig
 from xwr.capture import DCA1000EVM
 
-from mmw_host import CLI_BAUD, CLI_TIMEOUT_S, Config, add_port_args, cfg_args, load_cfg, send_config
+from .mmw_host import CLI_BAUD, CLI_TIMEOUT_S, Config, add_port_args, cfg_args, load_cfg, send_config
 
 CAPTURE_TIMEOUT_S = 3.0  # the stream ends when no data arrives for this long
 

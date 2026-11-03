@@ -30,10 +30,10 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
 from matplotlib.image import AxesImage
 
-from ddm_raw import DETECTION_DB, chirp_axes, ddm_virtual_array, doppler_spectrum, remove_static
-from mmw_host import add_port_args, ddm_params, load_cfg
-from plotting import CMAP, centre_bands, draw_axes, style
-from raw_capture import capture, chirps_per_loop, open_capture_card, raw_frame_shape
+from .ddm_raw import DETECTION_DB, chirp_axes, ddm_virtual_array, doppler_spectrum, remove_static
+from .mmw_host import add_port_args, ddm_params, load_cfg
+from .plotting import CMAP, centre_bands, draw_axes, style
+from .raw_capture import capture, chirps_per_loop, open_capture_card, raw_frame_shape
 
 AZIMUTH_BINS = 128
 TOP_VIEW_PIXELS = 256  # along y; x has twice as many
