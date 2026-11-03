@@ -30,7 +30,7 @@ host/ddm/                 Python host tools: the ddm command
 test/                     unit tests: C (Makefile, ddm_test.c, rfparser_test.c, stubs/) and
                           Python (test_*.py; data/ holds the .cfg each profile must render to)
 images/                   figures used by the documentation
-docs/                     documentation
+docs/                     documentation; raw_data.ipynb is a hands-on guide to raw DDM data
 pyproject.toml, uv.lock   Python project and locked dependencies (managed with uv)
 out/                      build output (not tracked)
 ```
@@ -121,7 +121,7 @@ sudo udevadm control --reload-rules
 ### Python
 
 Install [uv](https://docs.astral.sh/uv/). The host tools need Python ≥ 3.11, numpy, matplotlib,
-pyserial and xwr; `pytest` and `ruff` are development dependencies. Create the environment from `uv.lock`:
+pyserial and xwr; `pytest`, `ruff` and JupyterLab (for `docs/raw_data.ipynb`) are development dependencies. Create the environment from `uv.lock`:
 
 ```sh
 uv sync
@@ -285,6 +285,7 @@ uv run pytest      # host tools (Python)
 | `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
 | `test_frames.py` (pytest) | UART frame decoding: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input; `.cfg` parsing and `range_axis()`. |
 | `test_profile.py` (pytest) | `profiles/template.toml`, rendered for each command and with the gesture and TDM settings, gives the commands of its `test/data/*.cfg` fixture in order; the heat-map frame period, `[extra]` lines, rejected typos, the automatic Doppler window, and TOML errors versus `.cfg` warnings. |
+| `test_notebook.py` (pytest) | Executes `docs/raw_data.ipynb` on simulated data and checks that its step-by-step decoding matches `ddm.dsp`. |
 | `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
