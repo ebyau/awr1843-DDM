@@ -146,6 +146,9 @@ def render(profile: Profile, source: str = "") -> str:
 def apply_extra(lines: list[str], extra: list[str]) -> list[str]:
     """Each command in extra replaces all generated lines of that command, at the place of
     the first; commands not generated are added at the end."""
+    extra = [line for line in extra if line.strip()]
+    if any(line.split()[0] == "sensorStart" for line in extra):
+        raise ValueError("[extra] must not contain sensorStart; it is always the last line")
     by_command: dict[str, list[str]] = {}
     for line in extra:
         by_command.setdefault(line.split()[0], []).append(line)
@@ -170,7 +173,11 @@ def load(path: Path) -> tuple[str, Config]:
     else:
         text = path.read_text()
         cfg = parse_cfg(text)
-        for problem in check(cfg):
+        try:
+            problems = check(cfg)
+        except ValueError as err:  # e.g. advanced-frame files without frameCfg
+            problems = [f"limits not checked ({err})"]
+        for problem in problems:
             log.warning("%s: %s", path, problem)
     return text, cfg
 

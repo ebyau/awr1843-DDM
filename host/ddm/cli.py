@@ -229,8 +229,9 @@ def main() -> int:
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr)
     try:
         args.handler(args)
-    # OSError covers TimeoutError, serial.SerialException and missing files.
-    except (ValueError, RuntimeError, OSError) as err:
+    # OSError covers TimeoutError, serial.SerialException and missing files;
+    # TypeError covers wrongly typed profile values.
+    except (ValueError, TypeError, RuntimeError, OSError) as err:
         log.error("%s", err, exc_info=args.verbose)
         return 1
     return 0

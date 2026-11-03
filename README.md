@@ -130,7 +130,7 @@ All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the o
 | `ddm live PROFILE` | Live raw-data view: range-Doppler, decoded range-velocity and top view |
 
 Every command takes `-v` for debug output (each command sent to the radar, tracebacks) or `-q`
-for warnings and errors only. `--cli` and `--data` select other serial ports.
+for warnings and errors only, after the command name: `uv run ddm points -v PROFILE`. `--cli` and `--data` select other serial ports.
 
 ### Profiles
 

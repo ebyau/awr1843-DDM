@@ -1,5 +1,4 @@
 # raw.toml with fine velocity resolution for slow targets such as hand gestures.
-# Not yet tested on hardware.
 extends = "points.toml"
 description = """
 DDM-MIMO raw capture with fine velocity: raw.toml with chirps repeated every 474 us
