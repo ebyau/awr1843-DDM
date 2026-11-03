@@ -1,21 +1,24 @@
 # SPDX-License-Identifier: MIT
-"""Unit tests for raw DDM capture decoding; no hardware needed."""
+"""Unit tests for raw DDM and TDM capture decoding; no hardware needed."""
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from ddm.cfg import chirp_axes, min_range_m, parse_cfg, raw_frame_shape
+from ddm.cfg import chirp_axes, mimo_params, min_range_m, parse_cfg, raw_frame_shape
 from ddm.dca import iiqq_to_complex
 from ddm.dsp import (
     ddm_virtual_array,
+    decode_frame,
     doppler_spectrum,
     find_targets,
     fold,
     range_doppler_power,
     remove_static,
     signed_doppler_bin,
+    tdm_spectrum,
+    tdm_virtual_array,
     tx0_band,
 )
 
@@ -113,3 +116,45 @@ def test_ddm_virtual_array_separates_tx_copies() -> None:
     measured = np.angle(virtual[folded, 20] / virtual[folded, 20, 0, 0])
     expected = phase - phase[0, 0]
     assert np.allclose(np.angle(np.exp(1j * (measured - expected))), 0, atol=1e-3)
+
+
+def test_mimo_mode_from_configuration() -> None:
+    data = Path(__file__).parent / "data"
+    assert mimo_params(parse_cfg((data / "raw.cfg").read_text())) == (4, 3)
+    assert mimo_params(parse_cfg((data / "tdm.cfg").read_text())) == (0, 3)
+    with pytest.raises(ValueError, match="more sub-bands"):
+        mimo_params(parse_cfg((data / "raw.cfg").read_text().replace("ddmCfg 4", "ddmCfg 3")))
+
+
+def tdm_frame(doppler_bin: int, range_bin: int, antenna_phase: np.ndarray, loops: int = 32) -> np.ndarray:
+    """One noiseless TDM frame [chirp, rx, sample]: chirps TX0, TX1, TX2 in every loop; the
+    target moves 2 pi doppler_bin / loops per loop, so a third of that between TX chirps."""
+    num_tx = antenna_phase.shape[0]
+    n = np.arange(loops * num_tx)
+    s = np.arange(256)
+    motion = np.exp(2j * np.pi * doppler_bin * n / (loops * num_tx))[:, None, None]
+    antenna = np.exp(1j * antenna_phase[n % num_tx])[:, :, None]
+    return motion * antenna * np.exp(2j * np.pi * range_bin * s / 256)
+
+
+@pytest.mark.parametrize("doppler_bin", [-16, -5, 0, 7, 15])
+def test_tdm_virtual_array_compensates_motion(doppler_bin: int) -> None:
+    phase = np.random.default_rng(3).uniform(-np.pi, np.pi, (3, 4))
+    spectrum = tdm_spectrum(tdm_frame(doppler_bin, 20, phase), 3)
+    assert spectrum.shape == (32, 3, 4, 256)
+    power = (np.abs(spectrum) ** 2).sum(axis=(1, 2))
+    assert np.unravel_index(np.argmax(power), power.shape) == (doppler_bin % 32, 20)
+    virtual = tdm_virtual_array(spectrum)[doppler_bin % 32, 20]
+    measured = np.angle(virtual / virtual[0, 0])
+    expected = phase - phase[0, 0]
+    assert np.allclose(np.angle(np.exp(1j * (measured - expected))), 0, atol=1e-3)
+
+
+def test_tdm_decode_frame_places_target() -> None:
+    phase = np.zeros((3, 4))
+    frame = tdm_frame(-5, 40, phase) + tdm_frame(0, 20, phase)
+    raw, velocity, azimuth = decode_frame(frame, 0, 3, static_loop=3)
+    assert raw.shape == velocity.shape == (256, 32)
+    assert np.unravel_index(np.argmax(velocity), velocity.shape) == (40, 16 - 5)  # zero velocity centred
+    assert raw[20, 0] < 1e-6 * raw.max()  # static target removed
+    assert np.argmax(azimuth[40]) == 64  # boresight

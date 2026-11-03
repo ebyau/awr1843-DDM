@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cfg import Config, chirp_axes, ddm_params, min_range_m, parse_cfg, range_axis
+from .cfg import chirp_axes, ddm_params, mimo_params, min_range_m, parse_cfg, range_axis
 from .dsp import find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
 from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, frames
 from .plotting import centre_bands
@@ -25,13 +25,6 @@ from .radar import CLI_PORT, DATA_PORT, running_radar
 log = logging.getLogger(__name__)
 
 CAPTURE_DIR = Path("captures")
-
-
-def require_ddm(cfg: Config) -> tuple[int, int]:
-    bands, num_tx = ddm_params(cfg)
-    if bands <= num_tx:
-        raise ValueError("the configuration is not DDM (ddmCfg with more bands than TX)")
-    return bands, num_tx
 
 
 def cmd_cfg(args: argparse.Namespace) -> None:
@@ -117,24 +110,13 @@ def cmd_capture(args: argparse.Namespace) -> None:
     log.info("saved %d frames of %s (chirp, rx, sample) to %s", len(captured), captured[0].shape, out)
 
 
-def cmd_decode(args: argparse.Namespace) -> None:
-    """Decode a raw capture: range-Doppler map and the strongest targets with their sub-bands."""
-    import matplotlib.pyplot as plt
-
-    from .plotting import draw_axes
-
-    data = np.load(args.capture)
-    captured, cfg = data["frames"], parse_cfg(str(data["config"]))
-    bands, num_tx = require_ddm(cfg)
-    num_chirps = captured.shape[1]
+def print_ddm_targets(power: np.ndarray, bands: int, num_tx: int, min_range_bin: int,
+                      range_step: float, velocity_step: float) -> None:
+    """The strongest targets of a DDM range-Doppler map with their sub-band levels."""
+    num_chirps = power.shape[1]
     width = num_chirps // bands
-    range_step, velocity_step = chirp_axes(cfg, num_chirps)
-    power = range_doppler_power(captured)
-
-    log.info("%d frames; %.3f m and %.3f m/s per bin", len(captured), range_step, velocity_step)
     print(" range(m)  v(m/s)  TX0  " + "  ".join(f"band{b}(dB)" for b in range(bands))
           + "  weakest TX - mean spare (dB)")
-    min_range_bin = int(np.ceil(min_range_m(cfg) / range_step))
     for range_bin, folded_bin in find_targets(fold(power, bands), min_range_bin):
         band_power = power[range_bin, folded_bin::width]
         tx0 = int(tx0_band(band_power, num_tx))
@@ -146,8 +128,32 @@ def cmd_decode(args: argparse.Namespace) -> None:
         print(f"{range_bin * range_step:9.2f} {signed_bin * velocity_step:7.2f} {tx0:4d}  "
               + "  ".join(f"{level:10.1f}" for level in levels) + f"  {margin_db:28.1f}")
 
-    fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
+
+def cmd_decode(args: argparse.Namespace) -> None:
+    """Decode a raw DDM or TDM capture: range-Doppler map and the strongest targets."""
+    import matplotlib.pyplot as plt
+
+    from .plotting import draw_axes
+
+    data = np.load(args.capture)
+    captured, cfg = data["frames"], parse_cfg(str(data["config"]))
+    bands, num_tx = mimo_params(cfg)
+    num_chirps = captured.shape[1]
+    range_step, velocity_step = chirp_axes(cfg, num_chirps)
+    power = range_doppler_power(captured, 0 if bands else num_tx)
     db = 10 * np.log10(power / power.max())
+    min_range_bin = int(np.ceil(min_range_m(cfg) / range_step))
+    log.info("%d %s frames; %.3f m and %.3f m/s per bin", len(captured), "DDM" if bands else "TDM",
+             range_step, velocity_step)
+    if bands:
+        print_ddm_targets(power, bands, num_tx, min_range_bin, range_step, velocity_step)
+    else:
+        print(" range(m)  v(m/s)  level(dB)")
+        for range_bin, doppler_bin in find_targets(db, min_range_bin):
+            velocity = signed_doppler_bin(doppler_bin, 0, 0, power.shape[1]) * velocity_step
+            print(f"{range_bin * range_step:9.2f} {velocity:7.2f} {db[range_bin, doppler_bin]:10.1f}")
+
+    fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
     image = draw_axes(ax, db, range_step, bands, f"Raw-data range-Doppler map, {len(captured)} frames")
     fig.colorbar(image, ax=ax, label="Level relative to peak (dB)", shrink=0.8)
     if args.snapshot is not None:

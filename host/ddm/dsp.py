@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Signal processing of raw DDM frames [chirp, rx, sample], independent of the firmware."""
+"""Signal processing of raw DDM and TDM frames [chirp, rx, sample], independent of the firmware.
+
+TDM frames hold one chirp per TX in every loop, in TX order; DDM frames hold every TX on every chirp.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +22,19 @@ def doppler_spectrum(frames: np.ndarray) -> np.ndarray:
     return np.fft.fft(spectrum * np.hanning(num_chirps)[:, None, None], axis=-3)
 
 
-def range_doppler_power(frames: np.ndarray) -> np.ndarray:
-    """[frame, chirp, rx, sample] -> power [range, Doppler], summed over RX, mean over frames."""
+def tdm_spectrum(frames: np.ndarray, num_tx: int) -> np.ndarray:
+    """TDM [..., chirp, rx, sample] -> complex [..., Doppler, tx, rx, range]: the Doppler FFT
+    runs over the loops, separately for each TX."""
+    shape = frames.shape
+    by_tx = frames.reshape(*shape[:-3], shape[-3] // num_tx, num_tx, *shape[-2:])  # [..., loop, tx, ...]
+    return np.moveaxis(doppler_spectrum(np.moveaxis(by_tx, -3, -4)), -4, -3)
+
+
+def range_doppler_power(frames: np.ndarray, tdm_tx: int = 0) -> np.ndarray:
+    """[frame, chirp, rx, sample] -> power [range, Doppler], summed over antennas, mean over
+    frames; tdm_tx > 0 decodes TDM frames with that many TX."""
+    if tdm_tx:
+        return (np.abs(tdm_spectrum(frames, tdm_tx)) ** 2).sum(axis=(2, 3)).mean(axis=0).T
     return (np.abs(doppler_spectrum(frames)) ** 2).sum(axis=2).mean(axis=0).T
 
 
@@ -82,6 +96,18 @@ def ddm_virtual_array(spectrum: np.ndarray, bands: int, num_tx: int) -> tuple[np
     return virtual, folded + width * tx0
 
 
+def tdm_virtual_array(spectrum: np.ndarray) -> np.ndarray:
+    """One TDM frame's spectrum [Doppler, tx, rx, range] -> virtual array [Doppler, range, tx, rx].
+
+    TX m transmits m chirps after TX0, so a target at signed Doppler bin k has moved by an extra
+    2 pi k m / (TX x loops) of phase; that motion phase is removed.
+    """
+    num_loops, num_tx = spectrum.shape[:2]
+    signed_bin = np.fft.fftfreq(num_loops, 1 / num_loops)
+    motion = np.exp(-2j * np.pi * np.outer(signed_bin, np.arange(num_tx)) / (num_tx * num_loops))
+    return (spectrum * motion[:, :, None, None]).transpose(0, 3, 1, 2)
+
+
 def signed_doppler_bin(folded_bin: int, tx0: int, width: int, num_chirps: int) -> int:
     """TX0's Doppler bin, -num_chirps/2 .. num_chirps/2-1."""
     doppler_bin = folded_bin + width * tx0
@@ -91,15 +117,24 @@ def signed_doppler_bin(folded_bin: int, tx0: int, width: int, num_chirps: int) -
 def decode_frame(frame: np.ndarray, bands: int, num_tx: int,
                  static_loop: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One raw frame [chirp, rx, sample] -> power maps: raw [range, Doppler], decoded
-    velocity [range, Doppler] (zero velocity centred) and azimuth [range, angle].
+    velocity [range, Doppler] (zero velocity centred) and azimuth [range, angle]. bands 0
+    means TDM.
 
     static_loop, the chirps per loop, removes stationary objects. The decoded maps hold
     only cells DETECTION_DB above the noise; the others would land at arbitrary
     velocities and angles.
     """
-    spectrum = doppler_spectrum(frame if static_loop is None else remove_static(frame, static_loop))
-    raw = (np.abs(spectrum) ** 2).sum(axis=1).T
-    virtual, tx0_bin = ddm_virtual_array(spectrum, bands, num_tx)  # [folded bin, range, ...]
+    if static_loop is not None:
+        frame = remove_static(frame, static_loop)
+    if bands:
+        spectrum = doppler_spectrum(frame)
+        raw = (np.abs(spectrum) ** 2).sum(axis=1).T
+        virtual, tx0_bin = ddm_virtual_array(spectrum, bands, num_tx)  # [folded bin, range, ...]
+    else:
+        spectrum = tdm_spectrum(frame, num_tx)
+        raw = (np.abs(spectrum) ** 2).sum(axis=(1, 2)).T
+        virtual = tdm_virtual_array(spectrum)  # [Doppler, range, ...]
+        tx0_bin = np.broadcast_to(np.arange(raw.shape[1])[:, None], virtual.shape[:2])
     cell_power = (np.abs(virtual) ** 2).sum(axis=(2, 3))
     detected = cell_power > np.median(cell_power) * 10 ** (DETECTION_DB / 10)
     range_bin = np.broadcast_to(np.arange(raw.shape[0]), cell_power.shape)

@@ -258,6 +258,11 @@ uv run ddm live profiles/raw.toml --remove-static
 | `ddm live PROFILE` | Live three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
 | `ddm decode CAPTURE.npz` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map, and the strongest targets beyond the near edge of the CFAR range window (`cfarFovCfg`) with range and velocity. With DDM, targets are found on the folded map and also listed with their TX0 sub-band, the level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
 
+DDM or TDM is read from the configuration: without `ddmCfg` the frame is TDM, with chirps
+ordered TX0, TX1, TX2 in every loop. A TDM frame gets a Doppler FFT over the loops for each TX,
+and its virtual array is corrected for the target's motion between the TX chirps
+(exp(−j2π·k·m / (N_TX·N_loops)) for TX *m* at signed Doppler bin *k*).
+
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger
 `net.core.rmem_max`, switch settings) is described in xwr's
 [setup guide](https://radarml.github.io/xwr/setup/). Keep the capture card powered off while
@@ -277,7 +282,7 @@ uv run pytest      # host tools (Python)
 | Test | What it checks |
 |---|---|
 | `ddm_test` | Simulates 3 TX × 4 RX DDM chirps (firmware phase codes including the IF phase sign, Hann window, noise) for every Doppler bin from −64 to 63, on and 0.3 bin off the grid, with random antenna phases. Runs `dpif_ddm.h` (fold, empty band, TX mapping) and checks that velocity is recovered within one bin and that the virtual-array phases match the simulated antennas within 5°. |
-| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, and the DDM virtual array. |
+| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
 | `test_frames.py` (pytest) | UART frame decoding: points and other TLVs, corrupted lengths, a frame that swallows the next one (and recovery on the following frame), truncated input; `.cfg` parsing and `range_axis()`. |
 | `test_profile.py` (pytest) | Each `profiles/*.toml` renders to the commands of its `test/data/*.cfg` fixture; `extends`, `[extra]` lines, rejected typos, the automatic Doppler window, and TOML errors versus `.cfg` warnings. |
 | `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |

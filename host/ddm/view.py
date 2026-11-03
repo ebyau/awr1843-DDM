@@ -18,7 +18,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
 from matplotlib.image import AxesImage
 
-from .cfg import Config, chirp_axes, chirps_per_loop, ddm_params, range_axis, raw_frame_shape
+from .cfg import Config, chirp_axes, chirps_per_loop, doppler_bins, mimo_params, range_axis, raw_frame_shape
 from .dca import capture, open_capture_card
 from .dsp import AZIMUTH_BINS, decode_frame
 from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, Frame, frames
@@ -141,26 +141,25 @@ def read_raw_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray
 
 
 def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> None:
-    """Live raw-data view from the capture card: raw range-Doppler, decoded range-velocity
-    and top view. Brightness follows the xwr demo: amplitude raised to GAMMA (linear in the
+    """Live raw-data view from the capture card (DDM or TDM): raw range-Doppler, decoded
+    range-velocity and top view. Brightness follows the xwr demo: amplitude raised to GAMMA (linear in the
     top view), the colour scale clipped to the PCLIP percentiles."""
-    bands, num_tx = ddm_params(cfg)
-    if bands <= num_tx:
-        raise ValueError("the configuration is not DDM (ddmCfg with more bands than TX)")
+    bands, num_tx = mimo_params(cfg)
     static_loop = chirps_per_loop(cfg) if hide_static else None
     num_chirps, _, num_range = raw_frame_shape(cfg)
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     max_range = num_range * range_step
-    max_velocity = num_chirps / 2 * velocity_step
+    num_doppler = doppler_bins(cfg)
+    max_velocity = num_doppler / 2 * velocity_step
     range_bin, azimuth_bin, inside = top_view_lookup(num_range, range_step)
 
     fig, (ax_raw, ax_vel, ax_top) = plt.subplots(1, 3, figsize=(15, 5.5), layout="constrained")
-    empty = np.zeros((num_range, num_chirps))
-    raw_image = draw_axes(ax_raw, empty, range_step, bands, "Raw: one copy per TX")
+    empty = np.zeros((num_range, num_doppler))
+    raw_image = draw_axes(ax_raw, empty, range_step, bands, "Raw: one copy per TX" if bands else "Raw (TDM)")
     vel_image = ax_vel.imshow(empty, cmap=CMAP, aspect="auto", origin="lower", interpolation="nearest",
                               extent=(-max_velocity - velocity_step / 2, max_velocity - velocity_step / 2,
                                       -range_step / 2, max_range - range_step / 2))
-    style(ax_vel, "DDM decoded", "Radial velocity (m/s)", "Range (m)")
+    style(ax_vel, "DDM decoded" if bands else "TDM detected", "Radial velocity (m/s)", "Range (m)")
     top_image = ax_top.imshow(np.zeros(inside.shape), cmap=CMAP, aspect="equal", origin="lower",
                               extent=(-max_range, max_range, 0, max_range))
     style(ax_top, f"Top view ({num_tx}-TX virtual array)", "x (m)", "y (m)")
