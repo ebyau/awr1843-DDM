@@ -112,19 +112,50 @@ uv run ddm decode capture.npz
 uv run ddm live profiles/raw.toml      # live view; close the window to stop
 ```
 
-See [raw data capture](docs/development.md#raw-data-capture) for the capture card setup.
+Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`. See
+[raw data capture](docs/development.md#raw-data-capture) for the capture card setup.
 
-### 7. Make your own profile
+## Host tools
 
-Profiles in `profiles/` are short TOML files: chirp timing, MIMO mode, frame, CFAR window and
-outputs. `ddm cfg` checks one against the hardware limits, prints the resulting range and
-velocity resolution, and writes the TI `.cfg` file the firmware reads:
+All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the options.
+
+| Command | Purpose |
+|---|---|
+| `ddm cfg PROFILE [-o FILE]` | Check a profile against the hardware limits, show its derived numbers, write the `.cfg` |
+| `ddm points PROFILE` | Configure the radar and print a point-cloud summary per frame |
+| `ddm heatmap PROFILE` | Live range-Doppler heat map with the sub-bands marked |
+| `ddm bands PROFILE` | Level of each Doppler sub-band at the strongest target (static scene) |
+| `ddm capture PROFILE` | Record raw ADC frames through a DCA1000EVM |
+| `ddm decode CAPTURE.npz` | Decode a raw capture: range-Doppler map and the strongest targets |
+| `ddm live PROFILE` | Live raw-data view: range-Doppler, decoded range-velocity and top view |
+
+Every command takes `-v` for debug output (each command sent to the radar, tracebacks) or `-q`
+for warnings and errors only. `--cli` and `--data` select other serial ports.
+
+### Profiles
+
+A `PROFILE` is a short TOML file in `profiles/` or a TI `.cfg` file; stock TI configuration
+files such as `sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` still work.
+
+| Profile | Use |
+|---|---|
+| `points.toml` | DDM point cloud; the base of the others |
+| `heatmap.toml` | DDM with the range-Doppler heat map, for `heatmap` and `bands` |
+| `raw.toml` | DDM with raw ADC samples streamed to a DCA1000EVM, for `capture` and `live` |
+| `raw_fine.toml` | `raw.toml` with ±2 m/s and 0.063 m/s resolution, for slow targets such as gestures |
+| `tdm.toml` | The same chirp in TI's TDM-MIMO, for comparison |
+
+To make your own, copy or extend a shipped profile, check it, then run it:
 
 ```sh
-uv run ddm cfg profiles/points.toml -o points.cfg
+cp profiles/points.toml profiles/mine.toml       # edit: chirp, MIMO, frame, CFAR window, outputs
+uv run ddm cfg profiles/mine.toml                # limits, range/velocity resolution, .cfg text
+uv run ddm points profiles/mine.toml
 ```
 
-Every command also accepts TI `.cfg` files. See [profiles](docs/configuration.md#profiles).
+DDM is the default (`[mimo] bands = 4`); set `tdm = true` in `[mimo]` for TI's time-division
+MIMO with one TX per chirp. The tools read the mode from the configuration. See
+[profiles](docs/configuration.md#profiles) for every key and the hardware limits.
 
 ## Documentation
 
