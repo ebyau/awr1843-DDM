@@ -848,6 +848,7 @@ static int32_t MmwDemo_RFParser_parseCtrlConfig
     if(frameTotalChirps > 32U)
     {
         retVal = MMWDEMO_RFPARSER_ENOIMPL__NUM_UNIQUE_CHIRPS_MORE_THAN_32;
+        goto exit;
     }
 
     /* loop for profiles and find if it has valid chirps */

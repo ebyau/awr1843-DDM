@@ -5,13 +5,16 @@
 !/sdk/packages/ti/
 /sdk/packages/ti/*
 !/sdk/packages/ti/demo/
-!/sdk/packages/ti/datapath/
-!/sdk/packages/ti/board/
 /sdk/packages/ti/demo/*
 !/sdk/packages/ti/demo/xwr18xx/
 !/sdk/packages/ti/demo/utils/
 /sdk/packages/ti/demo/xwr18xx/*
 !/sdk/packages/ti/demo/xwr18xx/mmw/
+# Parts of TI's demo the raw-data firmware removes; copying the SDK in brings them back
+/sdk/packages/ti/demo/xwr18xx/mmw/dss/
+/sdk/packages/ti/demo/xwr18xx/mmw/docs/
+/sdk/packages/ti/demo/xwr18xx/mmw/profiles/
+/sdk/packages/ti/demo/xwr18xx/mmw/include/mmw_output.h
 
 # Build outputs, prebuilt binaries and generated docs
 *.bin
@@ -46,7 +49,7 @@ __pycache__/
 # Python environment
 .venv/
 
-# Screenshots saved in the repository root (figures for the docs go in images/)
+# Screenshots saved in the repository root
 /*.png
 
 # Raw captures written by ddm capture
