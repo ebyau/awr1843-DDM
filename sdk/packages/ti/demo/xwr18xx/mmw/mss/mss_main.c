@@ -65,6 +65,7 @@
 #include <ti/drivers/esm/esm.h>
 #include <ti/drivers/crc/crc.h>
 #include <ti/drivers/gpio/gpio.h>
+#include <ti/drivers/mailbox/mailbox.h>
 #include <ti/drivers/pinmux/pinmux.h>
 #include <ti/control/mmwave/mmwave.h>
 #include <ti/drivers/osal/DebugP.h>
@@ -1291,6 +1292,9 @@ static void MmwDemo_initTask(UArg arg0, UArg arg1)
 
     /* Initialize the GPIO */
     GPIO_init();
+
+    /* Mailbox carries mmWaveLink commands to the radar subsystem (BSS) */
+    Mailbox_init(MAILBOX_TYPE_MSS);
 
     MmwDemo_edmaInit();
 
