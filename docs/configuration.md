@@ -198,9 +198,9 @@ Example settings for `profiles/template.toml`:
 
 | Settings | Velocity | Frame period | Use |
 |---|---|---|---|
-| As shipped: `idle_us = 100`, `loops = 32`, `period_ms = 100` | ±5.96 m/s, 0.093 m/s per bin | 100 ms | General use; range up to 11.2 m in 0.044 m bins |
+| As shipped: `idle_us = 100`, `loops = 32`, `period_ms = 125` | ±5.96 m/s, 0.093 m/s per bin | 125 ms (8 frames/s) | General use; range up to 11.2 m in 0.044 m bins |
 | `idle_us = 415`, `loops = 16`, `period_ms = 50` | ±2 m/s, 0.062 m/s per bin (1 m/s sub-bands) | 50 ms | Slow targets such as hand gestures. Not yet tested on hardware. |
-| `tdm = true` | ±1.99 m/s, 0.12 m/s per bin | 100 ms | TI's TDM-MIMO, to compare the same scene without DDM |
+| `tdm = true` | ±1.99 m/s, 0.12 m/s per bin | 125 ms | TI's TDM-MIMO, to compare the same scene without DDM |
 
 The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
 921600-baud data port, so `ddm heatmap` and `ddm bands` run at 1 frame per second.
