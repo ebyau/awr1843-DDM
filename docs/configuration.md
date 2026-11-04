@@ -41,7 +41,7 @@ Behaviour:
 | `channelCfg` | Enable the TX antennas used (shipped profile: `15 7 0`, 4 RX and 3 TX) | |
 | `chirpCfg` | `numBands` chirp definitions. Every chirp enables the same TX set, contiguous from TX0 (TX mask `7` for 3 TX) | Phase codes are assigned by TX index; TX *k* goes to sub-band *k* |
 | `frameCfg` | Exactly `numBands` chirps per loop (`chirpEndIdx − chirpStartIdx + 1 = numBands`) | The phase pattern repeats every `numBands` chirps |
-| `cfarFovCfg <sf> 1 ...` | Doppler field of view covering the full velocity range (±20.6 m/s for the shipped profile) | CFAR runs on the folded matrix, before velocity is resolved. A narrower Doppler window filters on the folded (aliased) bin and can drop real targets. |
+| `cfarFovCfg <sf> 1 ...` | Doppler field of view covering the full velocity range (±5.96 m/s for the shipped profile) | CFAR runs on the folded matrix, before velocity is resolved. A narrower Doppler window filters on the folded (aliased) bin and can drop real targets. |
 | `compRangeBiasAndRxChanPhase` | 12 values in virtual-array order (`tx * 4 + rx`), measured in TDM mode | Same virtual array as TDM, so TDM calibration values apply unchanged |
 | `extendedMaxVelocity` | `0` (recommended) | This TDM feature extends velocity by testing TX motion-phase hypotheses; DDM already resolves the full chirp rate |
 
@@ -68,7 +68,7 @@ DDM is also only available in the AOP image (`./build.sh`); the non-AOP image
 
 ## Worked example: converting a TDM profile
 
-`profiles/template.toml`, as sent by `ddm points`, is TI's `profile_3d_aop.cfg` (in
+The test profile `test/data/aop.toml`, as sent by `ddm points`, is TI's `profile_3d_aop.cfg` (in
 `sdk/packages/ti/demo/xwr18xx/mmw/profiles/`) with these changes:
 
 ```diff
@@ -99,8 +99,8 @@ Step by step:
 3. **Doppler field of view.** The stock window (−7.06 to 12 m/s) is opened to the full
    ±21.2 m/s, slightly wider than the maximum velocity λ / (4 · Tc) ≈ 20.6 m/s (46 µs chirp
    period, λ ≈ 3.79 mm at the 79.1 GHz chirp centre frequency).
-4. **Output.** The noise profile output (4th `guiMonitor` argument) is turned off in the
-   shipped profile; the range-azimuth heat map stays off.
+4. **Output.** The noise profile output (4th `guiMonitor` argument) is turned off; the
+   range-azimuth heat map stays off.
 5. **Enable DDM.** `ddmCfg 4` before `sensorStart`.
 
 `clutterRemoval`, `calibDcRangeSig` and `measureRangeBiasAndRxChanPhase` are already disabled
@@ -112,7 +112,7 @@ To run the same scene in TDM for comparison, send TI's profile to the same firmw
 uv run ddm points sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg --frames 20
 ```
 
-or set `tdm = true` in a copy of the template (one TX per chirp, same chirp).
+or set `tdm = true` in a copy of `test/data/aop.toml` (one TX per chirp, same chirp).
 
 ## Profiles
 
@@ -163,8 +163,8 @@ range_m = [0.25, 15]           # cfarFovCfg range window (optional, this is the 
 lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones or are added
 ```
 
-`profiles/template.toml` lists every radar setting with its unit and limit. Only `[chirp]` and
-`[frame]` are required; the other tables have defaults.
+`profiles/template.toml` holds `[chirp]` and `[frame]`, which are required, and the `tdm` and `bands`
+settings; the other keys and tables have the defaults shown above.
 
 The commands the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take
 the values of TI's `profile_3d_aop.cfg`; a line in `[extra]` replaces every generated line of
@@ -198,9 +198,9 @@ Example settings for `profiles/template.toml`:
 
 | Settings | Velocity | Frame period | Use |
 |---|---|---|---|
-| As shipped: `idle_us = 7`, `loops = 32`, `period_ms = 100` | ±20.6 m/s, 0.32 m/s per bin | 100 ms | General use; the chirp of TI's `profile_3d_aop.cfg` |
-| `idle_us = 435`, `loops = 16`, `period_ms = 50` | ±2 m/s, 0.063 m/s per bin (1 m/s sub-bands) | 50 ms | Slow targets such as hand gestures. Not yet tested on hardware. |
-| `tdm = true` | ±6.9 m/s, 0.43 m/s per bin | 100 ms | TI's TDM-MIMO, to compare the same scene without DDM |
+| As shipped: `idle_us = 100`, `loops = 32`, `period_ms = 100` | ±5.96 m/s, 0.093 m/s per bin | 100 ms | General use; range up to 11.2 m in 0.044 m bins |
+| `idle_us = 415`, `loops = 16`, `period_ms = 50` | ±2 m/s, 0.062 m/s per bin (1 m/s sub-bands) | 50 ms | Slow targets such as hand gestures. Not yet tested on hardware. |
+| `tdm = true` | ±1.99 m/s, 0.12 m/s per bin | 100 ms | TI's TDM-MIMO, to compare the same scene without DDM |
 
 The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
 921600-baud data port, so `ddm heatmap` and `ddm bands` run at 1 frame per second.

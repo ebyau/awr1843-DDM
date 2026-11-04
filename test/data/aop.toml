@@ -1,0 +1,19 @@
+# Chirp of TI's profile_3d_aop.cfg; the golden .cfg fixtures in this folder are rendered from it.
+
+[chirp]
+start_ghz = 77
+idle_us = 7
+adc_start_us = 3
+ramp_end_us = 39
+tx_start_us = 1
+slope_mhz_per_us = 100
+samples = 256
+sample_rate_ksps = 7200
+rx_gain_db = 30
+
+[mimo]
+tdm = false
+
+[frame]
+loops = 32
+period_ms = 100

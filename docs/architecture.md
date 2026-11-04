@@ -42,15 +42,17 @@ With the shipped profile (`profiles/template.toml`, N = 4, 32 loops):
 | TX per chirp | 1 | 3 |
 | Chirps per frame | 96 (3 × 32) | 128 (4 × 32) |
 | Doppler FFT | 32 bins per TX | 128 bins, 4 sub-bands of 32 |
-| Max unambiguous velocity | ±6.9 m/s | ±20.6 m/s |
-| Velocity resolution | 0.43 m/s | 0.32 m/s |
+| Max unambiguous velocity | ±6.9 m/s | ±5.96 m/s |
+| Velocity resolution | 0.43 m/s | 0.093 m/s |
 | Chirps per TX per frame | 32 | 128 |
 | Motion phase between TX copies | compensated in AoA | none (TX simultaneous) |
 | Virtual array | 12 (3 TX × 4 RX) | 12, same geometry |
 | Radar cube | 384 KB | 512 KB |
 
-Both use a 46 µs chirp period (7 µs idle + 39 µs ramp), 77 GHz start frequency, 100 MHz/µs
-slope and 256 ADC samples (0.042 m range bins).
+The stock TDM profile uses a 46 µs chirp period (7 µs idle + 39 µs ramp), 100 MHz/µs slope
+and 0.042 m range bins; the DDM profile a 159 µs period (100 µs idle + 59 µs ramp),
+67.012 MHz/µs slope and 0.044 m range bins. Both start at 77 GHz with 256 ADC samples. On the
+stock 46 µs chirp, DDM reaches ±20.6 m/s with 0.32 m/s resolution.
 
 Velocity follows from the RF parser's `dopplerStep = c / (2 · fc · numDopplerBins · numTxAntennas · Tc)`.
 With DDM the cube has one TX block (`numTxAntennas = 1`) and 128 Doppler bins, so velocity is
@@ -149,7 +151,8 @@ flowchart TD
    6. Angle FFTs and point generation are unchanged. Velocity is `dopplerStep` × the signed
       unfolded bin.
 
-The point cloud TLV therefore reports velocity over the full ±20.6 m/s range.
+The point cloud TLV therefore reports velocity over the full unambiguous range (±5.96 m/s with
+the shipped profile).
 
 ## Buffer layouts
 

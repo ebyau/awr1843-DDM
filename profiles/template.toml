@@ -1,52 +1,21 @@
-# Radar profile template. Copy it, change the values under "RADAR", then check the result with
-#   uv run ddm cfg profiles/<name>.toml
-# which prints the range/velocity numbers and stops if a TI hardware limit is broken.
-# Every ddm command takes the profile and adds the outputs it needs (point cloud, heat map or
-# raw ADC data), so the same profile works for ddm points, heatmap, bands, capture and live.
-description = """
-DDM-MIMO, 3 TX, 4 sub-bands, 256 range bins, 128 chirps, 10 frames/s.
-"""
-
-# Velocity, with chirp period Tc = idle_us + ramp_end_us and wavelength lambda ~ 3.8 mm:
-#   DDM: v_max = lambda / (4 Tc)                 dv = lambda / (2 bands loops Tc)
-#   TDM: v_max = lambda / (4 N_TX Tc)            dv = lambda / (2 N_TX loops Tc)
-# These values: Tc = 46 us -> +-20.6 m/s, 0.32 m/s per bin.
-#
-# Example: slow targets / gestures (+-2 m/s, 0.063 m/s per bin):
-#   idle_us = 435, loops = 16, period_ms = 50
-
-# ============================== RADAR ==============================
+# Radar settings. Check them with: uv run ddm cfg profiles/<name>.toml
+# Every key, limit and formula: docs/configuration.md#profiles
 
 [chirp]
-start_ghz = 77            # chirp start frequency; the sweep must stay inside 76-81 GHz
-idle_us = 7               # gap before each ramp; chirp period = idle_us + ramp_end_us (sets v_max)
-adc_start_us = 3          # ADC starts this long into the ramp
-ramp_end_us = 39          # ramp length; needs adc_start_us + samples / sample rate <= ramp_end_us
-slope_mhz_per_us = 100    # bandwidth = slope x sampling time; sets range resolution
-samples = 256             # ADC samples per chirp = range bins (range FFT size, power of 2)
-sample_rate_ksps = 7200   # ADC rate; max range = rate x c / (2 x slope)
+start_ghz = 77
+idle_us = 100
+adc_start_us = 5.7
+ramp_end_us = 59
+tx_start_us = 1
+slope_mhz_per_us = 67.012
+samples = 256
+sample_rate_ksps = 5000
 rx_gain_db = 30
-tx_start_us = 1           # TX turns on this long after the ramp starts
 
 [mimo]
-tx = [0, 1, 2]            # TX antennas; DDM needs at least 2, contiguous from TX0
-rx = [0, 1, 2, 3]         # RX antennas
-bands = 4                 # DDM Doppler sub-bands (ddmCfg): divides 64, more than the TX count, <= 16
-tdm = false               # true = TI's time-division MIMO (one TX per chirp, bands ignored),
-                          # e.g. to compare the same scene with and without DDM
+tdm = false         # true = TI's TDM (one TX per chirp) instead of DDM
+bands = 4           # DDM sub-bands: 4, 8 or 16 (divides 64, more than 3 TX); ignored if tdm = true
 
 [frame]
-loops = 32                # chirps per frame = bands x loops = Doppler bins (DDM); power of 2
-period_ms = 100           # one frame every period_ms; must exceed the chirp burst.
-                          # ddm heatmap / bands raise it (to 1000 ms) if the 64 KB heat map
-                          # would not leave the UART in time (~711 ms).
-
-# ==================== OPTIONAL: on-chip detection ====================
-# Only affects the firmware's point cloud, not raw data. Defaults shown.
-# [cfar]
-# range_m = [0.25, 15]    # detection range window (m)
-# doppler_mps = [-21.2, 21.2]   # detection velocity window; default: the full +-v_max
-
-# Any other TI CLI command, verbatim; it replaces the generated line of the same command.
-# [extra]
-# lines = ["cfarCfg -1 0 2 8 4 3 0 15.0 0"]
+loops = 32          # chirps per frame = loops x bands (DDM) or x 3 TX (TDM)
+period_ms = 125     # frame period (ms); frames/s = 1000 / period_ms

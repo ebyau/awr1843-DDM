@@ -147,9 +147,8 @@ for warnings and errors only, after the command name: `uv run ddm points -v PROF
 ### Profiles
 
 A `PROFILE` is a short TOML file or a TI `.cfg` file. `profiles/template.toml` is the one
-shipped profile: every radar setting with its unit, limit and the formulas for maximum velocity
-and velocity resolution. Each command adds the outputs it needs (point cloud, heat map or raw
-ADC data), so one profile serves all of them. Stock TI configuration files such as
+shipped profile: the chirp, the DDM/TDM switch and the frame. Each command adds the outputs it
+needs (point cloud, heat map or raw ADC data), so one profile serves all of them. Stock TI configuration files such as
 `sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` still work and are sent as they
 are.
 
@@ -157,7 +156,7 @@ To change velocity range or resolution, copy the template, edit it, check it, th
 command sends the profile to the radar itself; there is no separate load step.
 
 ```sh
-cp profiles/template.toml profiles/mine.toml     # edit the RADAR section
+cp profiles/template.toml profiles/mine.toml     # edit the chirp and frame values
 uv run ddm cfg profiles/mine.toml                # limits, range/velocity resolution, .cfg text
 uv run ddm cfg profiles/mine.toml --for points   # the .cfg that ddm points would send
 uv run ddm capture profiles/mine.toml            # or live, points, heatmap
@@ -178,7 +177,8 @@ MIMO with one TX per chirp. The tools read the mode from the configuration. See
 
 ## Limitations
 
-- A target that falls between two Doppler bins can be reported one bin (0.32 m/s) off.
+- A target that falls between two Doppler bins can be reported one bin off (0.093 m/s with the
+  shipped profile).
 - One target per range/Doppler cell is assumed. Two targets at the same range whose sub-band
   copies overlap can be given the wrong velocity.
 - Signals that do not carry the TX phase code, such as receiver spurs near maximum range,
