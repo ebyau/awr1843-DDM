@@ -1,10 +1,13 @@
-# DDM-MIMO firmware for the AWR1843AOP
+# DDM-MIMO raw-data firmware for the AWR1843AOP
 
-Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that uses Doppler-division
-multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO. It is a modified copy of the
-out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`, AOP variant) and keeps that demo's
-command-line interface and UART output format, so existing configuration files and parsers
-still work. Without the new `ddmCfg` command the firmware behaves like the stock demo.
+Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that transmits with
+Doppler-division multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO, and streams
+the raw ADC samples of every chirp to a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM)
+capture card. The radar does no signal processing: Python tools on the PC capture the data,
+separate the transmitters and show live range-velocity and top-down views. The firmware is
+built from the out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`) and keeps its
+command-line interface, so the chirps are set with the usual `.cfg` commands plus one `ddmCfg`
+command.
 
 ## What DDM changes
 
@@ -17,25 +20,19 @@ angle of arrival (AoA). To do that it must tell the transmitters apart.
 - **DDM** (this firmware): all three TX transmit on every chirp. TX *k* adds a phase step to
   each chirp, which shifts its copy of every target by *k* Doppler sub-bands. The 128-point
   Doppler FFT is split into 4 sub-bands of 32 bins; three hold the TX copies and one stays empty.
-  The empty sub-band tells the processing which copy came from which TX, which recovers the
+  The empty sub-band tells the decoder on the PC which copy came from which TX, which recovers the
   12-element virtual array and resolves velocity over the full chirp rate: about ±20.6 m/s
   with 0.32 m/s resolution on the same chirp profile.
-
-![Range-Doppler map with DDM: each static target appears three times, in sub-bands 0, 1 and 2; sub-band 3 is empty](images/range-doppler-ddm.png)
-
-*Live range-Doppler map from `ddm heatmap`. Each static target appears once per TX at the
-same range, one sub-band apart; sub-band 3 is empty.*
-
-On static targets, angles measured with DDM match the stock TDM firmware within one angle bin,
-and the empty sub-band is 31–35 dB below the TX copies.
 
 ## Quick start
 
 ### 1. Prerequisites
 
-- Ubuntu x86-64 (tested on 26.04) and an AWR1843AOPEVM connected over USB.
+- Ubuntu x86-64 (tested on 26.04), an AWR1843AOPEVM connected over USB and mounted on a
+  DCA1000EVM, with the capture card on Ethernet as described in xwr's
+  [setup guide](https://radarml.github.io/xwr/setup/).
 - TI tools installed under `~/ti`: [mmWave SDK 03.06.02](https://www.ti.com/tool/MMWAVE-SDK)
-  (installs the compilers, SYS/BIOS, XDCtools, DSPLIB and MATHLIB it needs) and
+  (installs the ARM compiler, SYS/BIOS and XDCtools it needs) and
   [UniFlash 9.7](https://www.ti.com/tool/UNIFLASH) in `~/ti/uniflash_9.7.0`.
 - System packages, serial port access and [uv](https://docs.astral.sh/uv/):
 
@@ -67,12 +64,12 @@ Details and alternatives: [docs/development.md](docs/development.md#environment)
 ### 2. Build
 
 ```sh
-./build.sh          # -> out/xwr18xx_mmw_aop_demo.bin
+./build.sh          # -> out/xwr18xx_mmw_demo.bin
 ```
 
 ### 3. Flash
 
-Set the SOP switches to flashing mode (SOP0 on, SOP1 off, SOP2 on), unplug and replug USB, then:
+Power off the capture card. Set the SOP switches to flashing mode (SOP0 on, SOP1 off, SOP2 on), unplug and replug USB, then:
 
 ```sh
 ./flash.sh
@@ -95,7 +92,7 @@ resolution, maximum velocity and the TI `.cfg` text it sends.
 
 ### 5. Capture and decode raw data
 
-With the radar on a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card (see
+The radar streams its ADC samples to the capture card (see
 [raw data capture](docs/development.md#raw-data-capture) for its setup):
 
 ```sh
@@ -116,17 +113,6 @@ angle. It runs on a capture or on simulated data:
 uv run jupyter lab docs/raw_data.ipynb
 ```
 
-## On-chip outputs (firmware check)
-
-The firmware also detects targets itself and sends them over the UART data port
-(`/dev/ttyUSB1`); no capture card is needed:
-
-```sh
-uv run ddm points profiles/template.toml --frames 20   # point cloud summary per frame
-uv run ddm heatmap profiles/template.toml              # live range-Doppler map shown above
-uv run ddm bands profiles/template.toml                # level per sub-band (static scene)
-```
-
 ## Host tools
 
 All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the options.
@@ -134,23 +120,18 @@ All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the o
 | Command | Purpose |
 |---|---|
 | `ddm cfg PROFILE [-o FILE]` | Check a profile against the hardware limits, show its derived numbers, write the `.cfg` |
-| `ddm points PROFILE` | Configure the radar and print a point-cloud summary per frame |
-| `ddm heatmap PROFILE` | Live range-Doppler heat map with the sub-bands marked |
-| `ddm bands PROFILE` | Level of each Doppler sub-band at the strongest target (static scene) |
 | `ddm capture PROFILE` | Record raw ADC frames through a DCA1000EVM |
 | `ddm decode CAPTURE.npz` | Decode a raw capture: range-Doppler map and the strongest targets |
 | `ddm live PROFILE` | Live raw-data view: range-Doppler, decoded range-velocity and top view |
 
 Every command takes `-v` for debug output (each command sent to the radar, tracebacks) or `-q`
-for warnings and errors only, after the command name: `uv run ddm points -v PROFILE`. `--cli` and `--data` select other serial ports.
+for warnings and errors only, after the command name: `uv run ddm capture -v PROFILE`. `--cli` selects another serial port.
 
 ### Profiles
 
 A `PROFILE` is a short TOML file or a TI `.cfg` file. `profiles/template.toml` is the one
-shipped profile: the chirp, the DDM/TDM switch and the frame. Each command adds the outputs it
-needs (point cloud, heat map or raw ADC data), so one profile serves all of them. Stock TI configuration files such as
-`sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg` still work and are sent as they
-are.
+shipped profile: the chirp, the DDM/TDM switch and the frame. A `.cfg` file is sent as it is;
+it may only use the [commands the firmware accepts](docs/configuration.md#commands).
 
 To change velocity range or resolution, copy the template, edit it, check it, then run it. Every
 command sends the profile to the radar itself; there is no separate load step.
@@ -158,8 +139,7 @@ command sends the profile to the radar itself; there is no separate load step.
 ```sh
 cp profiles/template.toml profiles/mine.toml     # edit the chirp and frame values
 uv run ddm cfg profiles/mine.toml                # limits, range/velocity resolution, .cfg text
-uv run ddm cfg profiles/mine.toml --for points   # the .cfg that ddm points would send
-uv run ddm capture profiles/mine.toml            # or live, points, heatmap
+uv run ddm capture profiles/mine.toml            # or live
 ```
 
 DDM is the default (`[mimo] bands = 4`); set `tdm = true` in `[mimo]` for TI's time-division
@@ -171,9 +151,9 @@ MIMO with one TX per chirp. The tools read the mode from the configuration. See
 | Page | Contents |
 |---|---|
 | [docs/raw_data.ipynb](docs/raw_data.ipynb) | Hands-on guide to raw DDM data: FFTs, sub-bands, velocity, virtual array and angle |
-| [docs/architecture.md](docs/architecture.md) | How DDM works in detail, the MSS/DSS processing chain, buffer layouts, and where each DDM step lives in the code |
-| [docs/configuration.md](docs/configuration.md) | The `ddmCfg` command, rules for DDM chirp configurations, the TOML profile format, a worked example, and unsupported options |
-| [docs/development.md](docs/development.md) | Repository layout, toolchain, build variants, flashing details, tests, linting, coding conventions, and how to extend the firmware |
+| [docs/architecture.md](docs/architecture.md) | How DDM works, what the firmware does, the raw data format, and the decoder on the PC |
+| [docs/configuration.md](docs/configuration.md) | The firmware's commands, `ddmCfg`, rules for DDM chirp configurations, the TOML profile format and the hardware limits |
+| [docs/development.md](docs/development.md) | Repository layout, toolchain, flashing details, host tools, tests, linting, coding conventions, and how to extend the firmware |
 
 ## Limitations
 
@@ -183,12 +163,9 @@ MIMO with one TX per chirp. The tools read the mode from the configuration. See
   copies overlap can be given the wrong velocity.
 - Signals that do not carry the TX phase code, such as receiver spurs near maximum range,
   are resolved to a wrong velocity.
-- Very strong returns leak about 17 dB into the empty sub-band.
 - On the AWR1843AOP the IF signal carries the negative of the programmed TX phase, so the
   firmware programs a decreasing phase ramp. Other devices may behave differently.
-- Range-bias/RX-phase measurement, static clutter removal, DC range calibration and the
-  range-azimuth heat map are not available in DDM mode. See
-  [configuration](docs/configuration.md#unsupported-options).
+- Only legacy frames are supported (no advanced frames or sub-frames).
 
 ## License
 

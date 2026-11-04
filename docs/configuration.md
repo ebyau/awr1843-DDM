@@ -1,9 +1,29 @@
 # Configuration
 
-The firmware is configured the same way as TI's out-of-box demo: a `.cfg` file of CLI commands
-is sent line by line to the command port (`/dev/ttyUSB0`, 115200 baud), ending with
-`sensorStart`. All of TI's commands work as documented in the mmWave SDK user guide. This page
-covers what DDM adds and what it restricts.
+The radar is configured the same way as TI's out-of-box demo: a `.cfg` file of CLI commands is
+sent line by line to the command port (`/dev/ttyUSB0`, 115200 baud), ending with
+`sensorStart`. The firmware only sets up the sensor and streams the raw ADC samples of every
+chirp over LVDS to a DCA1000EVM. It does no signal processing, so TI's processing and output
+commands (`guiMonitor`, `cfarCfg`, `aoaFovCfg`, `clutterRemoval`, ...) do not exist and are
+rejected. The host tools read the radar parameters from the same `.cfg` text.
+
+## Commands
+
+| Command | Notes |
+|---|---|
+| `sensorStop`, `flushCfg` | Start every configuration with these. |
+| `dfeDataOutputMode 1` | Legacy frame only. Advanced frames (`3`) are rejected at `sensorStart`. |
+| `channelCfg`, `adcCfg`, `lowPower` | Fixed by the first `sensorStart` after power-up. To change them, reset the radar. The host tools expect complex samples (`adcCfg 2 1`). |
+| `adcbufCfg -1 <fmt> <swap> <interleave> 1` | Chirp threshold must be `1`. The host tools expect complex samples (`fmt 0`). |
+| `profileCfg`, `chirpCfg`, `frameCfg` | As in TI's mmWave SDK user guide. For DDM, see the rules below. |
+| `lvdsStreamCfg -1 <header> 1 0` | Streams ADC samples (format `1`) with no software session (`0`). The host tools expect `header` `0`. |
+| `calibData <save> <restore> <flashOffset>` | RF calibration save/restore, as in TI's demo. `calibData 0 0 0` turns it off. |
+| `ddmCfg <numBands>` | DDM-MIMO phase coding; see below. |
+| `sensorStart [0]` | Applies the configuration and starts streaming. `sensorStart 0` restarts the previous configuration. |
+| `queryDemoStatus` | Prints the sensor state and the number of frames streamed. |
+
+`sensorStart` without an argument needs `adcbufCfg`, `lvdsStreamCfg` and `calibData` to be
+sent again since the last `sensorStop`, together with the sensor commands.
 
 ## `ddmCfg`
 
@@ -13,15 +33,19 @@ ddmCfg <numBands>
 
 | `numBands` | Effect |
 |---|---|
-| `0` (or no `ddmCfg` line) | Stock TDM-MIMO behaviour. The firmware sends TI's exact RF command sequence. |
+| `0` (or no `ddmCfg` line) | TDM-MIMO, or a single TX: no phase coding. |
 | `4` | DDM-MIMO with 4 Doppler sub-bands: 3 TX copies and one empty sub-band. Tested on hardware. |
 | `8`, `16` | More sub-bands than TX + 1. Accepted, but untested on hardware. |
 
-`numBands` must divide 64, because the per-chirp phase step must be a whole number of the phase
-shifter's 64 steps, and must be larger than the number of TX (at most 16). The TX0 sub-band is
-found as the first of the strongest run of consecutive sub-bands, one per TX, so any value
-above the number of TX resolves velocity. Extra empty sub-bands cost detection sensitivity:
-the fold averages every sub-band, so empty ones add noise without adding signal.
+`numBands` must divide 64 and be larger than the number of TX (at most 16). **TI hardware
+limit:** each TX has a 6-bit phase shifter, so a phase can only be set in 64 steps of 5.625°.
+The phase step between chirps is 360° / `numBands`, which is a whole number of steps only if
+`numBands` divides 64.
+
+On the host, the TX0 sub-band is found as the first of the strongest run of consecutive
+sub-bands, one per TX, so any value above the number of TX resolves velocity. Extra empty
+sub-bands cost detection sensitivity: the fold averages every sub-band, so empty ones add noise
+without adding signal.
 
 Behaviour:
 
@@ -37,112 +61,36 @@ Behaviour:
 
 | Command | Requirement | Why |
 |---|---|---|
-| `dfeDataOutputMode` | `1` (legacy frame) | The phase codes are set per chirp definition of a legacy frame. Advanced frames and subframes (`3`) are not supported. |
+| `dfeDataOutputMode` | `1` (legacy frame) | The phase codes are set per chirp definition of a legacy frame. |
 | `channelCfg` | Enable the TX antennas used (shipped profile: `15 7 0`, 4 RX and 3 TX) | |
 | `chirpCfg` | `numBands` chirp definitions. Every chirp enables the same TX set, contiguous from TX0 (TX mask `7` for 3 TX) | Phase codes are assigned by TX index; TX *k* goes to sub-band *k* |
 | `frameCfg` | Exactly `numBands` chirps per loop (`chirpEndIdx − chirpStartIdx + 1 = numBands`) | The phase pattern repeats every `numBands` chirps |
-| `cfarFovCfg <sf> 1 ...` | Doppler field of view covering the full velocity range (±5.96 m/s for the shipped profile) | CFAR runs on the folded matrix, before velocity is resolved. A narrower Doppler window filters on the folded (aliased) bin and can drop real targets. |
-| `compRangeBiasAndRxChanPhase` | 12 values in virtual-array order (`tx * 4 + rx`), measured in TDM mode | Same virtual array as TDM, so TDM calibration values apply unchanged |
-| `extendedMaxVelocity` | `0` (recommended) | This TDM feature extends velocity by testing TX motion-phase hypotheses; DDM already resolves the full chirp rate |
 
-The detection matrix seen by CFAR is `numRangeBins × (numDopplerBins / numBands)` 16-bit
-values and must fit the accelerator's 32 KB limit. The shipped profile uses 256 × 32 = 16 KB.
-
-## Unsupported options
-
-These assume one TX per chirp. When `ddmCfg` is active they are rejected at `sensorStart`.
-
-| Option | Why it does not work with DDM | What to do |
-|---|---|---|
-| `measureRangeBiasAndRxChanPhase` enabled | Measures range bias and RX phase per TX from a TDM radar cube | Measure in TDM mode (no `ddmCfg`), then copy the values into `compRangeBiasAndRxChanPhase` of the DDM configuration |
-| `clutterRemoval` enabled | Subtracts the mean over chirps. With DDM only TX0's static return survives that mean (TX1/TX2 are phase-coded and average out), so only TX0's copy is removed and the virtual array is distorted | Leave disabled |
-| `calibDcRangeSig` enabled | Same chirp-mean estimate as clutter removal | Leave disabled |
-| `guiMonitor` range-azimuth heat map (5th argument) | The heat map code assumes a TDM radar cube; the AoA unit rejects it | Set to `0`. The range-Doppler heat map (6th argument) works and shows all sub-bands. |
-
-The first three print `Error: ddmCfg does not support measureRangeBiasAndRxChanPhase,
-clutterRemoval or calibDcRangeSig`. The range-azimuth heat map is rejected by the DSP chain
-during configuration.
-
-DDM is also only available in the AOP image (`./build.sh`); the non-AOP image
-(`./build.sh std`) fails `sensorStart` when `ddmCfg` is set.
-
-## Worked example: converting a TDM profile
-
-The test profile `test/data/aop.toml`, as sent by `ddm points`, is TI's `profile_3d_aop.cfg` (in
-`sdk/packages/ti/demo/xwr18xx/mmw/profiles/`) with these changes:
-
-```diff
--chirpCfg 0 0 0 0 0 0 0 1
--chirpCfg 1 1 0 0 0 0 0 2
--chirpCfg 2 2 0 0 0 0 0 4
--frameCfg 0 2 32 0 100 1 0
--guiMonitor -1 1 1 1 0 0 1
-+chirpCfg 0 0 0 0 0 0 0 7
-+chirpCfg 1 1 0 0 0 0 0 7
-+chirpCfg 2 2 0 0 0 0 0 7
-+chirpCfg 3 3 0 0 0 0 0 7
-+frameCfg 0 3 32 0 100 1 0
-+guiMonitor -1 1 1 0 0 0 1
--cfarFovCfg -1 1 -7.06 12
-+cfarFovCfg -1 1 -21.2 21.2
-+ddmCfg 4
- sensorStart
-```
-
-Step by step:
-
-1. **Chirps.** TDM uses three chirp definitions with TX masks 1, 2 and 4 (one TX each). DDM
-   needs `numBands` = 4 definitions, all with mask `7` (TX0, TX1, TX2). The chirp profile
-   (`profileCfg`) is unchanged.
-2. **Frame.** `frameCfg 0 3 32 ...` loops chirps 0–3 32 times: 128 chirps per frame, a
-   128-point Doppler FFT, 4 sub-bands of 32 bins. The frame period stays 100 ms.
-3. **Doppler field of view.** The stock window (−7.06 to 12 m/s) is opened to the full
-   ±21.2 m/s, slightly wider than the maximum velocity λ / (4 · Tc) ≈ 20.6 m/s (46 µs chirp
-   period, λ ≈ 3.79 mm at the 79.1 GHz chirp centre frequency).
-4. **Output.** The noise profile output (4th `guiMonitor` argument) is turned off; the
-   range-azimuth heat map stays off.
-5. **Enable DDM.** `ddmCfg 4` before `sensorStart`.
-
-`clutterRemoval`, `calibDcRangeSig` and `measureRangeBiasAndRxChanPhase` are already disabled
-in TI's profile, so they need no change.
-
-To run the same scene in TDM for comparison, send TI's profile to the same firmware:
-
-```sh
-uv run ddm points sdk/packages/ti/demo/xwr18xx/mmw/profiles/profile_3d_aop.cfg --frames 20
-```
-
-or set `tdm = true` in a copy of `test/data/aop.toml` (one TX per chirp, same chirp).
+To run the same scene in TDM for comparison, set `tdm = true` in a copy of the profile: one
+chirp definition per TX (masks 1, 2, 4), `frameCfg 0 2 ...` and no `ddmCfg`.
 
 ## Profiles
 
 The host tools take either a TI `.cfg` file or a TOML profile. A profile describes the radar in a
 few lines, with units in the key names, and is rendered to `.cfg` text when a command runs
-(rendered files are not stored). The outputs come from the command:
+(rendered files are not stored).
 
-| Command | Outputs added to the profile |
-|---|---|
-| `ddm capture`, `ddm live` | Raw ADC data over LVDS to the DCA1000EVM (`lvdsStreamCfg -1 0 1 0`) and the point cloud on the UART |
-| `ddm points` | Point cloud, range profile and statistics on the UART |
-| `ddm heatmap`, `ddm bands` | As `points`, plus the range-Doppler heat map. A frame period too short for the heat map on the UART is raised to 1000 ms (or the minimum needed), with a message. |
-
-`ddm cfg PROFILE` checks a profile, logs the derived numbers (chirp period, frame rate, range and
-velocity resolution, sub-band span, radar cube and CFAR matrix size) and prints the `.cfg` text;
-`--for {capture,points,heatmap}` selects the outputs (default `capture`) and `-o FILE` writes it
-to a file. TI `.cfg` files are sent as they are.
+`ddm cfg PROFILE` checks a profile, logs the derived numbers (chirp period, chirp burst, frame
+rate, range and velocity resolution, sub-band span, raw frame size and raw data rate) and prints
+the `.cfg` text; `-o FILE` writes it to a file. TI `.cfg` files are sent as they are.
 
 ```toml
 description = "Shown as % comments at the top of the .cfg"
 
 [chirp]                        # profileCfg
 start_ghz = 77
-idle_us = 7
-adc_start_us = 3
-ramp_end_us = 39
-slope_mhz_per_us = 100
+idle_us = 100
+adc_start_us = 5.7
+ramp_end_us = 59
+slope_mhz_per_us = 67.012
 tx_start_us = 1
 samples = 256
-sample_rate_ksps = 7200
+sample_rate_ksps = 5000
 rx_gain_db = 30
 
 [mimo]
@@ -153,37 +101,48 @@ tdm = false                    # true: TI's TDM, one chirp per TX, no ddmCfg
 
 [frame]
 loops = 32
-period_ms = 100
-
-[cfar]
-range_m = [0.25, 15]           # cfarFovCfg range window (optional, this is the default)
-# doppler_mps = [-7.06, 12]    # default: the full unambiguous velocity + 2.5 %
+period_ms = 125
 
 [extra]
-lines = ["clutterRemoval -1 0"]  # TI commands that replace the generated ones or are added
+lines = ["calibData 1 0 0x1F0000"]  # TI commands that replace the generated ones or are added
 ```
 
-`profiles/template.toml` holds `[chirp]` and `[frame]`, which are required, and the `tdm` and `bands`
-settings; the other keys and tables have the defaults shown above.
+`profiles/template.toml` holds `[chirp]` and `[frame]`, which are required, and the `tdm` and
+`bands` settings; the other keys and tables have the defaults shown above. `[chirp]` also takes
+`tx_power_backoff`, `tx_phase_shifter`, `hpf1_corner` and `hpf2_corner` (default 0).
 
-The commands the format does not describe (`cfarCfg`, `multiObjBeamForming`, calibration and monitoring) take
-the values of TI's `profile_3d_aop.cfg`; a line in `[extra]` replaces every generated line of
-the same command. `[chirp]` also takes `tx_power_backoff`, `tx_phase_shifter`, `hpf1_corner` and
-`hpf2_corner` (default 0).
+The rendered `.cfg` holds only the commands the firmware accepts, with fixed values for the ones
+the format does not describe (`adcCfg 2 1`, `adcbufCfg -1 0 1 1 1`, `lowPower 0 0`,
+`lvdsStreamCfg -1 0 1 0`, `calibData 0 0 0`). A line in `[extra]` replaces every generated line
+of the same command; other commands are added before `sensorStart`, which `[extra]` must not
+contain.
 
-Every command checks the configuration against these limits. For a TOML profile a violation is
-an error; for a `.cfg` file it is a warning.
+### Limits
+
+`ddm cfg`, `ddm capture` and `ddm live` check the configuration against these limits. For a TOML profile a violation is
+an error; for a `.cfg` file it is a warning, and the file is sent anyway.
 
 | Limit | Why |
 |---|---|
-| DDM: `bands` divides 64, and number of TX < `bands` ≤ 16 | Phase step in whole phase shifter steps (see [`ddmCfg`](#ddmcfg)) |
+| DDM: `bands` divides 64, and number of TX < `bands` ≤ 16 | **TI hardware limit:** the 6-bit phase shifter has 64 steps, so the phase step 360° / `bands` must be a whole number of steps (see [`ddmCfg`](#ddmcfg)) |
 | DDM: at least 2 TX, contiguous from TX0 | Phase codes are assigned by TX index |
-| At most 32 chirps per loop | Chirp definitions per frame loop |
-| Range bins × (Doppler bins / `bands`) × 2 B ≤ 32 KB | CFAR detection matrix in the hardware accelerator |
-| ADC start + samples / sample rate ≤ ramp end | Sampling must end before the ramp does |
-| Chirps per frame × chirp period < frame period | The chirps must fit in the frame |
-| Heat map bytes × 10 / 921600 baud < frame period | The range-Doppler heat map must leave the UART before the next frame |
-| Chirp within 76–81 GHz | RF band of the device |
+| At most 32 chirps per loop | Size of the chirp table in the firmware's RF parser (a firmware limit, not a hardware one) |
+| DDM: `bands` chirps per loop, all with the same TX mask | The phase pattern repeats every `bands` chirps (see [rules](#rules-for-a-ddm-configuration)) |
+| 1–255 loops per frame | **TI hardware limit:** `frameCfg` loop count |
+| `samples` × 4 B, rounded up to 16 B, × number of RX ≤ 16 KB | **TI hardware limit:** the 32 KB ADC buffer works as two halves (ping-pong): one chirp fills one half while the other is streamed out. Complex samples take 4 B and each RX's block is padded to 16 B, so 4 RX allow at most 1024 samples per chirp. |
+| `idle_us` ≤ 5242.87 µs | **TI hardware limit:** `profileCfg` idle time is a 19-bit count of 10 ns steps (0–524287) |
+| `ramp_end_us` ≤ 5000 µs | **TI hardware limit:** `profileCfg` ramp end time is at most 500000 steps of 10 ns |
+| `adc_start_us` + `samples` / sample rate ≤ `ramp_end_us` | ADC sampling must end before the ramp does, or the last samples see no chirp |
+| Chirp within 76–81 GHz | **TI hardware limit:** RF band of the device, from the start frequency to the end of the ramp. The slope may be negative (a down-chirp); then the ramp ends below the start frequency. |
+| Chirps per frame × chirp period + 0.3 ms ≤ frame period | **TI hardware limit:** the chirp burst must fit in the frame, and the radar subsystem needs about 0.3 ms of blank time between frames. No processing time is needed beyond that: the radar only streams the samples. |
+
+These are also TI hardware limits, from TI's `rl_sensor.h`, but are not checked by the tools:
+
+| Limit | Value |
+|---|---|
+| `adc_start_us` | 0–40.95 µs |
+| `sample_rate_ksps` | Complex ADC output (`adcCfg 2 1`): at most 12500 ksps |
+| Data rate | The raw data rate (`ddm cfg` shows it) must fit through the LVDS link to the DCA1000EVM and on to the PC over gigabit Ethernet (at most 125 MB/s, less in practice). The shipped profile needs about 4 MB/s. |
 
 ## Velocity range and resolution
 
@@ -194,31 +153,32 @@ With chirp period Tc = `idle_us` + `ramp_end_us` and wavelength λ ≈ 3.8 mm:
 | DDM | λ / (4 · Tc) | λ / (2 · `bands` · `loops` · Tc) |
 | TDM | λ / (4 · N_TX · Tc) | λ / (2 · N_TX · `loops` · Tc) |
 
-Example settings for `profiles/template.toml`:
+Raising the idle time lowers the velocity range and refines the velocity resolution by the
+same factor, without changing range. Example settings for `profiles/template.toml`:
 
 | Settings | Velocity | Frame period | Use |
 |---|---|---|---|
-| As shipped: `idle_us = 100`, `loops = 32`, `period_ms = 100` | ±5.96 m/s, 0.093 m/s per bin | 100 ms | General use; range up to 11.2 m in 0.044 m bins |
+| As shipped: `idle_us = 100`, `loops = 32`, `period_ms = 125` | ±5.96 m/s, 0.093 m/s per bin | 125 ms (8 frames/s) | General use; range up to 11.2 m in 0.044 m bins |
 | `idle_us = 415`, `loops = 16`, `period_ms = 50` | ±2 m/s, 0.062 m/s per bin (1 m/s sub-bands) | 50 ms | Slow targets such as hand gestures. Not yet tested on hardware. |
-| `tdm = true` | ±1.99 m/s, 0.12 m/s per bin | 100 ms | TI's TDM-MIMO, to compare the same scene without DDM |
-
-The range-Doppler heat map is 256 × 128 × 2 bytes = 64 KB per frame, about 0.7 s on the
-921600-baud data port, so `ddm heatmap` and `ddm bands` run at 1 frame per second.
+| `tdm = true` | ±1.99 m/s, 0.12 m/s per bin | 125 ms | TI's TDM-MIMO, to compare the same scene without DDM |
 
 ## Errors at `sensorStart`
 
-If `sensorStart` fails, the CLI prints the failing step and an error code, for example
-`Error: MmwDemo_configSensor failed [-50001]`.
+If `sensorStart` fails, the CLI prints the reason, then the failing step, for example
+`Error: invalid profile, chirp or frame configuration [Error:-50001]` followed by
+`Error: MmwDemo_configSensor failed [-1]`.
 
 | Message or code | Cause |
 |---|---|
 | `Error: numBands must be 0, or a divisor of 64 in (3, 16]` | Invalid `ddmCfg` argument (reported by `ddmCfg` itself) |
-| `Error: DDM needs frameCfg with N chirps per loop` | `frameCfg` loop length differs from `numBands`, or not a legacy frame |
-| `Error: ddmCfg does not support ...` | An unsupported option is enabled (see above) |
-| `MmwDemo_configSensor failed [-50001]` | RF parser: TX set not contiguous from TX0, fewer than 2 TX, or not fewer TX than sub-bands |
-| `MmwDemo_configSensor failed [-50013]` | RF parser: chirps enable different TX sets |
+| `Error: DDM needs frameCfg with N chirps per loop` | `frameCfg` loop length differs from `numBands` |
+| `Error: invalid profile, chirp or frame configuration [Error:-50001]` | TX set not contiguous from TX0, fewer than 2 TX, or not fewer TX than sub-bands |
+| `Error: invalid profile, chirp or frame configuration [Error:-50013]` | Chirps enable different TX sets |
+| `Error: only a legacy frame is supported (dfeDataOutputMode 1)` | Advanced frame configuration |
+| `Error: Full configuration (including adcbufCfg, lvdsStreamCfg and calibData) must be provided before sensorStart` | A required command is missing |
+| `Error: channelCfg, adcCfg and lowPower cannot change after the first sensorStart; reset the device` | These are fixed after the first start |
 | `Error: rlRfSetMiscConfig retVal=...` / `Error: rlRfSetPhaseShiftConfig retVal=...` | The RF front end rejected the phase shifter configuration |
-| `Error: mmWave Config failed [Error code: ... Subsystem: ...]` | TI mmWave control error (as in the stock demo, now printed on the CLI) |
+| `Error: mmWave Config failed [Error code: ... Subsystem: ...]` | TI mmWave control error |
 
-The host tools stop at the first command whose reply does not contain `Done` and prints
-that reply.
+The host tools stop at the first command whose reply does not contain `Done` and print that
+reply. A radar that does not reply at all needs a reset (NRST button or power cycle).

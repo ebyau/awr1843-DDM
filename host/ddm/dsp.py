@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
-# Host-side peak picking, a simpler statistic than the firmware's CFAR: changing
-# cfarCfg does not change it.
-DETECTION_DB = 15.0  # above the median of the folded map
+DETECTION_DB = 15.0  # peak picking: above the median of the folded map
+MIN_RANGE_M = 0.25  # targets start beyond the TX-to-RX leakage in the first range bins
 MAX_TARGETS = 10
 AZIMUTH_BINS = 128
 
@@ -50,7 +49,7 @@ def remove_static(frames: np.ndarray, chirps_per_loop: int) -> np.ndarray:
 
 
 def fold(power: np.ndarray, bands: int) -> np.ndarray:
-    """Mean log-power over the sub-bands, as the firmware's detection matrix: [range, bin]."""
+    """Mean log-power over the sub-bands (the folded map that targets are detected on): [range, bin]."""
     num_range, num_doppler = power.shape
     return np.log10(power).reshape(num_range, bands, num_doppler // bands).mean(axis=1) * 10
 

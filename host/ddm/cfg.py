@@ -38,16 +38,12 @@ def profile(cfg: Config) -> dict[str, float]:
     return {name: float(value) for name, value in zip(PROFILE_FIELDS, args, strict=False)}
 
 
-def fft_size(n: int) -> int:
-    """Smallest power of two >= n, as the firmware's FFT sizes."""
-    return 1 << (n - 1).bit_length()
-
-
 def range_axis(cfg: Config) -> tuple[int, float]:
-    """Number of range bins and metres per bin, from profileCfg."""
+    """Number of range bins and metres per bin, from profileCfg: the host's range FFT has
+    one bin per ADC sample (no zero padding)."""
     p = profile(cfg)
-    num_bins = fft_size(int(p["samples"]))
-    slope_hz_per_s = p["slope_mhz_per_us"] * 1e12
+    num_bins = int(p["samples"])
+    slope_hz_per_s = abs(p["slope_mhz_per_us"]) * 1e12  # negative slopes give the same range axis
     return num_bins, SPEED_OF_LIGHT * p["sample_rate_ksps"] * 1e3 / (2 * slope_hz_per_s * num_bins)
 
 
@@ -101,10 +97,10 @@ def mimo_params(cfg: Config) -> tuple[int, int]:
 
 
 def doppler_bins(cfg: Config) -> int:
-    """Doppler FFT size: every chirp with DDM, one chirp per loop with TDM."""
+    """Doppler FFT size (no zero padding): every chirp with DDM, one chirp per loop with TDM."""
     if is_tdm(cfg):
-        return fft_size(int(cfg_args(cfg, "frameCfg")[2]))
-    return fft_size(chirps_per_frame(cfg))
+        return int(cfg_args(cfg, "frameCfg")[2])
+    return chirps_per_frame(cfg)
 
 
 def chirp_axes(cfg: Config, num_chirps: int) -> tuple[float, float]:
@@ -118,13 +114,6 @@ def max_velocity(cfg: Config) -> float:
     """Unambiguous radial velocity in m/s: lambda / (4 * chirp period), times the TX count with TDM."""
     chirps = chirps_per_loop(cfg) if is_tdm(cfg) else 1
     return SPEED_OF_LIGHT / (4 * centre_frequency_hz(cfg) * chirps * chirp_period_us(cfg) * 1e-6)
-
-
-def min_range_m(cfg: Config) -> float:
-    """Near edge of the firmware's CFAR range window (cfarFovCfg ... 0 min max), which
-    also skips TX-to-RX leakage; 0 without one."""
-    windows = [args for args in cfg.get("cfarFovCfg", []) if args[1] == "0"]
-    return float(windows[0][2]) if windows else 0.0
 
 
 def raw_frame_shape(cfg: Config) -> tuple[int, int, int]:

@@ -6,7 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ddm.cfg import chirp_axes, mimo_params, min_range_m, parse_cfg, raw_frame_shape
+from ddm.cfg import (
+    SPEED_OF_LIGHT,
+    centre_frequency_hz,
+    chirp_axes,
+    chirp_period_us,
+    doppler_bins,
+    mimo_params,
+    parse_cfg,
+    profile,
+    range_axis,
+    raw_frame_shape,
+)
 from ddm.dca import iiqq_to_complex
 from ddm.dsp import (
     ddm_virtual_array,
@@ -61,11 +72,6 @@ def test_iiqq_round_trip() -> None:
     assert np.array_equal(iiqq_to_complex(to_iiqq(iq), shape), iq)
 
 
-def test_min_range_from_cfar_range_window() -> None:
-    assert min_range_m(parse_cfg(RAW_CFG.read_text())) == 0.25
-    assert min_range_m(parse_cfg("profileCfg 0\n")) == 0.0
-
-
 def test_chirp_axes_match_firmware_profile() -> None:
     range_step, velocity_step = chirp_axes(parse_cfg(RAW_CFG.read_text()), 128)
     assert range_step == pytest.approx(0.0422, rel=1e-2)
@@ -89,6 +95,30 @@ def test_simulated_ddm_target_is_resolved(doppler_bin: int) -> None:
     tx0 = tx0_band(power[target_range, folded_bin::width], num_tx)
     assert target_range == range_bin
     assert signed_doppler_bin(folded_bin, tx0, width, chirps) == (doppler_bin + 64) % chirps - 64
+
+
+def test_target_at_true_range_and_velocity_without_power_of_two_sizes() -> None:
+    """200 samples and 30 loops (120 chirps): the axes follow the unpadded FFTs."""
+    cfg = parse_cfg(RAW_CFG.read_text().replace("1 256 7200", "1 200 7200").replace("0 3 32 0", "0 3 30 0"))
+    num_chirps, _, num_samples = raw_frame_shape(cfg)
+    assert (num_chirps, num_samples) == (120, 200) == (doppler_bins(cfg), range_axis(cfg)[0])
+    p = profile(cfg)
+    distance_m, velocity_mps = 3.0, 1.5
+    beat_hz = 2 * p["slope_mhz_per_us"] * 1e12 * distance_m / SPEED_OF_LIGHT
+    wavelength_m = SPEED_OF_LIGHT / centre_frequency_hz(cfg)
+    doppler_cycles = 2 * velocity_mps * chirp_period_us(cfg) * 1e-6 / wavelength_m  # per chirp
+    n = np.arange(num_chirps)[:, None, None]
+    t = np.arange(num_samples) / (p["sample_rate_ksps"] * 1e3)
+    frame = sum(np.exp(2j * np.pi * (beat_hz * t + doppler_cycles * n + k * n / 4)) for k in range(3))
+
+    range_step, velocity_step = chirp_axes(cfg, num_chirps)
+    power = range_doppler_power(np.repeat(frame, 4, axis=1)[None])
+    (range_bin, folded_bin), *_ = find_targets(fold(power, 4))
+    width = num_chirps // 4
+    tx0 = tx0_band(power[range_bin, folded_bin::width], 3)
+    assert range_bin * range_step == pytest.approx(distance_m, abs=range_step)
+    assert signed_doppler_bin(folded_bin, tx0, width, num_chirps) * velocity_step == pytest.approx(
+        velocity_mps, abs=velocity_step)
 
 
 def ddm_frame(doppler_bin: int, range_bin: int, antenna_phase: np.ndarray) -> np.ndarray:

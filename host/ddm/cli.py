@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""ddm: configure the AWR1843AOP DDM-MIMO firmware and decode its output.
+"""ddm: configure the AWR1843AOP DDM-MIMO raw-data firmware, capture and decode its ADC data.
 
 A PROFILE is a TOML profile (profiles/template.toml) or a TI .cfg file, chosen by its suffix.
-TOML profiles get the outputs the command needs; .cfg files are sent as they are.
+TOML profiles are rendered to .cfg text; .cfg files are sent as they are.
 """
 
 from __future__ import annotations
@@ -16,12 +16,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .cfg import chirp_axes, ddm_params, mimo_params, min_range_m, parse_cfg, range_axis
-from .dsp import find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
-from .frames import HEATMAP_Q8_TO_DB, TLV_RANGE_DOPPLER, frames
-from .plotting import centre_bands
-from .profile import OUTPUTS, derived, load
-from .radar import CLI_PORT, DATA_PORT, running_radar
+from .cfg import chirp_axes, mimo_params, parse_cfg
+from .dsp import MIN_RANGE_M, find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
+from .profile import derived, load
+from .radar import CLI_PORT
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +28,7 @@ CAPTURE_DIR = Path("captures")
 
 def cmd_cfg(args: argparse.Namespace) -> None:
     """Check a profile against the hardware limits, log its derived numbers and write its .cfg text."""
-    text, cfg = load(args.profile, args.use)
+    text, cfg = load(args.profile)
     for name, value in derived(cfg).items():
         log.info("%-24s %8.4g", name, value)
     if args.out is None:
@@ -40,62 +38,11 @@ def cmd_cfg(args: argparse.Namespace) -> None:
         log.info("wrote %s", args.out)
 
 
-def cmd_points(args: argparse.Namespace) -> None:
-    """Configure the radar and print a point-cloud summary per frame."""
-    text, _ = load(args.profile, "points")
-    with running_radar(text, args.cli, args.data) as data:
-        for frame in itertools.islice(frames(data), args.frames):
-            nearest = min(frame.points, key=lambda p: p.x**2 + p.y**2, default=None)
-            summary = (f"nearest ({nearest.x:+.2f}, {nearest.y:+.2f}, {nearest.z:+.2f}) m, "
-                       f"v={nearest.v:+.2f} m/s") if nearest else "no points"
-            print(f"frame {frame.number:5d}: {len(frame.points):3d} points, {summary}")
-
-
-def cmd_heatmap(args: argparse.Namespace) -> None:
-    """Live range-Doppler heat map from the firmware, with the sub-band boundaries marked."""
-    from .view import heatmap_view  # matplotlib loads only for the commands that plot
-
-    text, cfg = load(args.profile, "heatmap")
-    bands = ddm_params(cfg)[0] if args.bands is None else args.bands
-    heatmap_view(text, cfg, bands, args.cli, args.data, args.snapshot)
-
-
-def band_levels_db(heatmap: np.ndarray, bands: int) -> np.ndarray:
-    """Peak level per Doppler sub-band at the strongest range bin, in dB.
-
-    The sub-bands are centred on their static-target copies, as in the plots: a
-    static target sits on a band edge, so its Doppler spill would otherwise count
-    as the neighbouring (empty) band.
-    """
-    row = heatmap[np.argmax(heatmap.max(axis=1))]
-    return centre_bands(row[None, :], bands)[0].reshape(bands, -1).max(axis=1) * HEATMAP_Q8_TO_DB
-
-
-def cmd_bands(args: argparse.Namespace) -> None:
-    """Print the level of each Doppler sub-band at the strongest range bin (static scene)."""
-    text, cfg = load(args.profile, "heatmap")
-    num_range_bins, _ = range_axis(cfg)
-    bands = ddm_params(cfg)[0] if args.bands is None else args.bands
-    if bands < 2:
-        raise ValueError("the configuration has no ddmCfg; pass --bands")
-    with running_radar(text, args.cli, args.data) as data:
-        for frame in itertools.islice(frames(data), args.frames):
-            raw = frame.tlvs.get(TLV_RANGE_DOPPLER)
-            if raw is None:
-                log.warning("frame %d: no range-Doppler heat map TLV", frame.number)
-                continue
-            heatmap = np.frombuffer(raw, dtype="<u2").reshape(num_range_bins, -1)
-            levels = band_levels_db(heatmap.astype(float), bands)
-            rel = levels - levels.max()
-            text = "  ".join(f"band{i}: {r:6.1f} dB" for i, r in enumerate(rel))
-            print(f"frame {frame.number:4d} ({heatmap.shape[1]} Doppler bins): {text}")
-
-
 def cmd_capture(args: argparse.Namespace) -> None:
     """Record raw ADC frames through a DCA1000EVM capture card."""
     from .dca import capture, open_capture_card  # xwr loads only for the capture commands
 
-    text, _ = load(args.profile, "capture")
+    text, _ = load(args.profile)
     out = args.out or CAPTURE_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{args.profile.stem}.npz"
     stream = capture(text, args.cli, open_capture_card())
     try:
@@ -143,7 +90,7 @@ def cmd_decode(args: argparse.Namespace) -> None:
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     power = range_doppler_power(captured, 0 if bands else num_tx)
     db = 10 * np.log10(power / power.max())
-    min_range_bin = int(np.ceil(min_range_m(cfg) / range_step))
+    min_range_bin = int(np.ceil(MIN_RANGE_M / range_step))
     log.info("%d %s frames; %.3f m and %.3f m/s per bin", len(captured), "DDM" if bands else "TDM",
              range_step, velocity_step)
     if bands:
@@ -168,7 +115,7 @@ def cmd_live(args: argparse.Namespace) -> None:
     """Live raw-data view: raw range-Doppler, DDM-decoded range-velocity and top view."""
     from .view import live_view
 
-    text, cfg = load(args.profile, "capture")
+    text, cfg = load(args.profile)
     live_view(text, cfg, args.cli, args.remove_static)
 
 
@@ -180,8 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
     verbosity.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
     cli_port = argparse.ArgumentParser(add_help=False, parents=[common])
     cli_port.add_argument("--cli", default=CLI_PORT, help=f"CLI port (default {CLI_PORT})")
-    ports = argparse.ArgumentParser(add_help=False, parents=[cli_port])
-    ports.add_argument("--data", default=DATA_PORT, help=f"data port (default {DATA_PORT})")
     commands = parser.add_subparsers(title="commands", required=True, metavar="COMMAND")
 
     def add(handler, name: str, parents: list[argparse.ArgumentParser]) -> argparse.ArgumentParser:
@@ -192,23 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = add(cmd_cfg, "cfg", [])
     sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--for", dest="use", choices=OUTPUTS, default="capture",
-                     help="outputs of the command the profile is for (default capture)")
     sub.add_argument("-o", "--out", type=Path, metavar="FILE", help="write the .cfg here (default stdout)")
-
-    sub = add(cmd_points, "points", [ports])
-    sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--frames", type=int, default=10, help="frames to print (default 10)")
-
-    sub = add(cmd_heatmap, "heatmap", [ports])
-    sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--bands", type=int, help="sub-band markers (default: ddmCfg; 0: none)")
-    sub.add_argument("--snapshot", type=Path, metavar="PNG", help="save one frame to this PNG and exit")
-
-    sub = add(cmd_bands, "bands", [ports])
-    sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--bands", type=int, help="sub-bands (default: ddmCfg)")
-    sub.add_argument("--frames", type=int, default=5, help="frames to print (default 5)")
 
     sub = add(cmd_capture, "capture", [cli_port])
     sub.add_argument("profile", type=Path, metavar="PROFILE")

@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 
 import serial
 
 log = logging.getLogger(__name__)
 
 CLI_PORT, CLI_BAUD, CLI_TIMEOUT_S = "/dev/ttyUSB0", 115200, 6.0
-DATA_PORT, DATA_BAUD, DATA_TIMEOUT_S = "/dev/ttyUSB1", 921600, 3.0
 PROMPT = b"mmwDemo:/>"
 
 
@@ -43,15 +40,3 @@ def sensor_stop(cli: serial.Serial, wait: bool = False) -> None:
 def open_cli(port: str) -> serial.Serial:
     return serial.Serial(port, CLI_BAUD, timeout=CLI_TIMEOUT_S)
 
-
-@contextmanager
-def running_radar(cfg_text: str, cli_port: str, data_port: str) -> Iterator[serial.Serial]:
-    """Configure and start the radar (the configuration ends with sensorStart); yields the
-    data port and stops the radar on exit."""
-    with open_cli(cli_port) as cli, serial.Serial(data_port, DATA_BAUD, timeout=DATA_TIMEOUT_S) as data:
-        send_config(cli, cfg_text)
-        data.reset_input_buffer()
-        try:
-            yield data
-        finally:
-            sensor_stop(cli)

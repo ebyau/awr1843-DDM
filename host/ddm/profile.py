@@ -1,14 +1,12 @@
 # SPDX-License-Identifier: MIT
 """TOML profiles: a short description of the chirp, MIMO mode and frame, rendered to the TI
-.cfg text the firmware reads. The outputs (point cloud, heat map, raw ADC data) follow from the
-command that sends it. See docs/configuration.md for the format.
+.cfg text the raw-data firmware reads. See docs/configuration.md for the format.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
-import math
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -26,8 +24,8 @@ from .cfg import (
     parse_cfg,
     range_axis,
 )
-from .limits import CFAR_MATRIX_MAX_BYTES, UART_BITS_PER_BYTE, check
-from .radar import DATA_BAUD
+from .cfg import profile as chirp_profile
+from .limits import check
 
 log = logging.getLogger(__name__)
 
@@ -38,30 +36,12 @@ DEFAULTS: Profile = {
               "hpf1_corner": 0, "hpf2_corner": 0},
     "mimo": {"tx": [0, 1, 2], "rx": [0, 1, 2, 3], "bands": 4, "tdm": False},
     "frame": {},
-    "cfar": {"range_m": [0.25, 15]},
     "extra": {"lines": []},
 }
 REQUIRED = {
     "chirp": set(PROFILE_FIELDS) - set(DEFAULTS["chirp"]),
     "frame": {"loops", "period_ms"},
 }
-OPTIONAL = {"cfar": {"doppler_mps"}}
-# Outputs per use: guiMonitor flags and raw ADC data over LVDS.
-OUTPUTS = {
-    "capture": {"point_cloud": 1, "range_profile": 0, "stats": 0, "heatmap": 0, "raw_lvds": 1},
-    "points": {"point_cloud": 1, "range_profile": 1, "stats": 1, "heatmap": 0, "raw_lvds": 0},
-    "heatmap": {"point_cloud": 1, "range_profile": 1, "stats": 1, "heatmap": 1, "raw_lvds": 0},
-}
-HEATMAP_PERIOD_MS = 1000  # frame period that leaves the UART time for a 64 KB heat map
-DOPPLER_MARGIN = 1.025  # CFAR Doppler window over the unambiguous velocity, rounded up to 0.1 m/s
-
-# Commands the profile format does not describe, as in TI's profile_3d_aop.cfg; [extra] overrides them.
-CFAR = ["cfarCfg -1 0 2 8 4 3 0 15.0 0", "cfarCfg -1 1 0 4 2 3 1 15.0 0", "multiObjBeamForming -1 1 0.5",
-        "calibDcRangeSig -1 0 -5 8 256", "clutterRemoval -1 0", "",
-        "compRangeBiasAndRxChanPhase 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0",
-        "measureRangeBiasAndRxChanPhase 0 1. 0.2", "", "aoaFovCfg -1 -90 90 -90 90"]
-MONITORS = ["extendedMaxVelocity -1 0", "", "CQRxSatMonitor 0 3 11 121 0", "CQSigImgMonitor 0 127 8",
-            "analogMonitor 0 0"]
 
 
 def read(path: Path) -> Profile:
@@ -73,7 +53,7 @@ def read(path: Path) -> Profile:
             continue
         if table not in DEFAULTS:
             raise ValueError(f"{path}: unknown table [{table}]")
-        known = set(DEFAULTS[table]) | REQUIRED.get(table, set()) | OPTIONAL.get(table, set())
+        known = set(DEFAULTS[table]) | REQUIRED.get(table, set())
         if unknown := set(keys) - known:
             raise ValueError(f"{path}: unknown key(s) in [{table}]: {', '.join(sorted(unknown))}")
         if missing := REQUIRED.get(table, set()) - set(keys):
@@ -100,47 +80,21 @@ def mask(indices: list[int]) -> int:
     return sum(1 << i for i in set(indices))
 
 
-def render(profile: Profile, use: str = "capture", source: str = "") -> str:
-    """The TI .cfg text of a profile from read(), with the outputs of a use in OUTPUTS."""
-    chirp, mimo, frame, cfar = (profile[t] for t in ("chirp", "mimo", "frame", "cfar"))
-    out = OUTPUTS[use]
+def render(profile: Profile, source: str = "") -> str:
+    """The TI .cfg text of a profile from read(): the radar streams raw ADC data over LVDS."""
+    chirp, mimo, frame = (profile[t] for t in ("chirp", "mimo", "frame"))
     tx_mask = mask(mimo["tx"])
     # TDM: one chirp per TX, in the listed order. DDM: one chirp per sub-band, all TX on each.
     rows = [1 << tx for tx in mimo["tx"]] if mimo["tdm"] else [tx_mask] * mimo["bands"]
-    channel = f"channelCfg {mask(mimo['rx'])} {tx_mask} 0"
-    chirps = [f"chirpCfg {i} {i} 0 0 0 0 0 {row}" for i, row in enumerate(rows)]
-    profile_cfg = "profileCfg " + " ".join(fmt(chirp[name]) for name in PROFILE_FIELDS)
-    ddm = [] if mimo["tdm"] else [f"ddmCfg {mimo['bands']}"]
-
-    def frame_cfg(period_ms: float) -> str:
-        return f"frameCfg 0 {len(rows) - 1} {frame['loops']} 0 {fmt(period_ms)} 1 0"
-
-    radar = parse_cfg("\n".join([channel, profile_cfg, *chirps, frame_cfg(frame["period_ms"]), *ddm]))
-    period_ms = frame["period_ms"]
-    if out["heatmap"]:
-        uart_ms = range_axis(radar)[0] * doppler_bins(radar) * 2 * UART_BITS_PER_BYTE / DATA_BAUD * 1e3
-        if period_ms <= uart_ms:
-            period_ms = max(HEATMAP_PERIOD_MS, math.floor(uart_ms) + 1)
-            log.info("frame period raised from %g to %g ms: the heat map takes %.0f ms on the UART",
-                     frame["period_ms"], period_ms, uart_ms)
-    timing = [profile_cfg, *chirps, frame_cfg(period_ms)]
-    doppler = cfar.get("doppler_mps")
-    if doppler is None:
-        v = math.ceil(max_velocity(radar) * DOPPLER_MARGIN * 10) / 10
-        doppler = [-v, v]
-    gui = [out["point_cloud"], out["range_profile"], 0, 0, out["heatmap"], out["stats"]]
-
     lines = [
-        "sensorStop", "flushCfg", "dfeDataOutputMode 1", channel, "adcCfg 2 1", "adcbufCfg -1 0 1 1 1",
-        "lowPower 0 0", *timing,
-        "guiMonitor -1 " + " ".join(fmt(flag) for flag in gui),
-        *CFAR,
-        "cfarFovCfg -1 0 " + " ".join(fmt(r) for r in cfar["range_m"]),
-        "cfarFovCfg -1 1 " + " ".join(fmt(d) for d in doppler),
-        "", *MONITORS,
-        f"lvdsStreamCfg -1 0 {fmt(out['raw_lvds'])} 0",
+        "sensorStop", "flushCfg", "dfeDataOutputMode 1", f"channelCfg {mask(mimo['rx'])} {tx_mask} 0",
+        "adcCfg 2 1", "adcbufCfg -1 0 1 1 1", "lowPower 0 0",
+        "profileCfg " + " ".join(fmt(chirp[name]) for name in PROFILE_FIELDS),
+        *(f"chirpCfg {i} {i} 0 0 0 0 0 {row}" for i, row in enumerate(rows)),
+        f"frameCfg 0 {len(rows) - 1} {frame['loops']} 0 {fmt(frame['period_ms'])} 1 0",
+        "lvdsStreamCfg -1 0 1 0",
         "calibData 0 0 0",
-        *ddm,
+        *([] if mimo["tdm"] else [f"ddmCfg {mimo['bands']}"]),
     ]
     lines = apply_extra(lines, profile["extra"]["lines"])
     header = [f"% Generated from {source} by 'ddm cfg'; edit the profile, not this file."] if source else []
@@ -167,12 +121,12 @@ def apply_extra(lines: list[str], extra: list[str]) -> list[str]:
     return result + [line for group in by_command.values() for line in group]
 
 
-def load(path: Path, use: str = "capture") -> tuple[str, Config]:
-    """The .cfg text and parsed commands of a profile: a .toml profile rendered for a use in
-    OUTPUTS (hardware-limit violations are errors) or a TI .cfg file, sent as it is
+def load(path: Path) -> tuple[str, Config]:
+    """The .cfg text and parsed commands of a profile: a .toml profile, rendered
+    (hardware-limit violations are errors), or a TI .cfg file, sent as it is
     (violations are logged as warnings)."""
     if path.suffix == ".toml":
-        text = render(read(path), use, path.name)
+        text = render(read(path), path.name)
         cfg = parse_cfg(text)
         if problems := check(cfg):
             raise ValueError(f"{path}: " + "; ".join(problems))
@@ -195,11 +149,12 @@ def derived(cfg: Config) -> dict[str, float]:
     num_doppler = doppler_bins(cfg)
     num_rx = int(cfg_args(cfg, "channelCfg")[0]).bit_count()
     v_max = max_velocity(cfg)
-    folded = num_doppler if is_tdm(cfg) else num_doppler // bands
+    frame_rate = 1e3 / float(cfg_args(cfg, "frameCfg")[4])
+    frame_bytes = chirps_per_frame(cfg) * num_rx * int(chirp_profile(cfg)["samples"]) * 4  # complex 16-bit
     numbers = {
         "chirp period (us)": chirp_period_us(cfg),
         "chirp burst (ms)": chirps_per_frame(cfg) * chirp_period_us(cfg) / 1e3,
-        "frame rate (Hz)": 1e3 / float(cfg_args(cfg, "frameCfg")[4]),
+        "frame rate (Hz)": frame_rate,
         "range step (m)": range_step,
         "range max (m)": num_range * range_step,
         "v max (m/s)": v_max,
@@ -207,6 +162,6 @@ def derived(cfg: Config) -> dict[str, float]:
     }
     if not is_tdm(cfg):
         numbers["sub-band span (m/s)"] = 2 * v_max / bands
-    numbers["radar cube (KB)"] = num_range * chirps_per_frame(cfg) * num_rx * 4 / 1024
-    numbers[f"CFAR matrix (KB, max {CFAR_MATRIX_MAX_BYTES // 1024})"] = num_range * folded * 2 / 1024
+    numbers["raw frame (KB)"] = frame_bytes / 1024
+    numbers["raw data rate (MB/s)"] = frame_bytes * frame_rate / 1e6
     return numbers
