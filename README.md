@@ -3,8 +3,8 @@
 Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that transmits with
 Doppler-division multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO, and streams
 the raw ADC samples of every chirp to a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM)
-capture card. The radar does no signal processing: Python tools on the PC capture the data,
-show the raw signal live, and separate the transmitters for range-velocity and top-down views. The firmware is
+capture card. The radar does no signal processing: Python tools on the PC capture the data
+unchanged and plot the raw signal, live or from a capture. The firmware is
 built from the out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`) and keeps its
 command-line interface, so the chirps are set with the usual `.cfg` commands plus one `ddmCfg`
 command.
@@ -20,7 +20,7 @@ angle of arrival (AoA). To do that it must tell the transmitters apart.
 - **DDM** (this firmware): all three TX transmit on every chirp. TX *k* adds a phase step to
   each chirp, which shifts its copy of every target by *k* Doppler sub-bands. The 128-point
   Doppler FFT is split into 4 sub-bands of 32 bins; three hold the TX copies and one stays empty.
-  The empty sub-band tells the decoder on the PC which copy came from which TX, which recovers the
+  The empty sub-band shows processing on the PC which copy came from which TX, which recovers the
   12-element virtual array and resolves velocity over the full chirp rate: about ±20.6 m/s
   with 0.32 m/s resolution on the same chirp profile.
 
@@ -90,28 +90,18 @@ uv run ddm cfg profiles/template.toml
 This checks the profile against the hardware limits and prints its range and velocity
 resolution, maximum velocity and the TI `.cfg` text it sends.
 
-### 5. Capture and decode raw data
+### 5. Capture and view raw data
 
 The radar streams its ADC samples to the capture card (see
 [raw data capture](docs/development.md#raw-data-capture) for its setup):
 
 ```sh
 uv run ddm capture profiles/template.toml -n 50 -o wave.npz   # 50 frames of ADC samples
-uv run ddm decode wave.npz                                    # targets and range-Doppler map
+uv run ddm show wave.npz                                      # replay its raw signal
 uv run ddm live profiles/template.toml                        # raw signal live; close the window to stop
 ```
 
 Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`.
-
-### 6. Learn to work with the data
-
-[docs/raw_data.ipynb](docs/raw_data.ipynb) walks through DDM decoding step by step in plain
-numpy: range and Doppler FFTs, the TX copies in the sub-bands, velocity, the virtual array and
-angle. It runs on a capture or on simulated data:
-
-```sh
-uv run jupyter lab docs/raw_data.ipynb
-```
 
 ## Host tools
 
@@ -121,8 +111,8 @@ All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the o
 |---|---|
 | `ddm cfg PROFILE [-o FILE]` | Check a profile against the hardware limits, show its derived numbers, write the `.cfg` |
 | `ddm capture PROFILE` | Record raw ADC frames through a DCA1000EVM |
-| `ddm decode CAPTURE.npz` | Decode a raw capture: range-Doppler map and the strongest targets |
-| `ddm live PROFILE` | Live raw signal and unwindowed spectrum; `--decoded` for range-velocity and top view |
+| `ddm live PROFILE` | Live raw signal of RX 0: ADC samples and the unwindowed range-Doppler spectrum |
+| `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop or saved as a PNG |
 
 Every command takes `-v` for debug output (each command sent to the radar, tracebacks) or `-q`
 for warnings and errors only, after the command name: `uv run ddm capture -v PROFILE`. `--cli` selects another serial port.
@@ -150,19 +140,12 @@ MIMO with one TX per chirp. The tools read the mode from the configuration. See
 
 | Page | Contents |
 |---|---|
-| [docs/raw_data.ipynb](docs/raw_data.ipynb) | Hands-on guide to raw DDM data: FFTs, sub-bands, velocity, virtual array and angle |
-| [docs/architecture.md](docs/architecture.md) | How DDM works, what the firmware does, the raw data format, and the decoder on the PC |
+| [docs/architecture.md](docs/architecture.md) | How DDM works, what the firmware does, and the raw data format |
 | [docs/configuration.md](docs/configuration.md) | The firmware's commands, `ddmCfg`, rules for DDM chirp configurations, the TOML profile format and the hardware limits |
 | [docs/development.md](docs/development.md) | Repository layout, toolchain, flashing details, host tools, tests, linting, coding conventions, and how to extend the firmware |
 
 ## Limitations
 
-- A target that falls between two Doppler bins can be reported one bin off (0.093 m/s with the
-  shipped profile).
-- One target per range/Doppler cell is assumed. Two targets at the same range whose sub-band
-  copies overlap can be given the wrong velocity.
-- Signals that do not carry the TX phase code, such as receiver spurs near maximum range,
-  are resolved to a wrong velocity.
 - On the AWR1843AOP the IF signal carries the negative of the programmed TX phase, so the
   firmware programs a decreasing phase ramp. Other devices may behave differently.
 - Only legacy frames are supported (no advanced frames or sub-frames).

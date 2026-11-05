@@ -21,13 +21,11 @@ host/ddm/                 Python host tools: the ddm command
   cfg.py                    parse TI .cfg text; range, velocity, DDM and frame parameters
   radar.py                  serial control: send a configuration, start and stop the sensor
   dca.py                    raw ADC capture through a DCA1000EVM (uses xwr)
-  rawdata.py                capture byte order, lossless int16 storage, load_capture
-  dsp.py                    FFTs, DDM and TDM decoding of raw frames
-  view.py                   live views: raw signal, or decoded maps
-  plotting.py               shared plot style and the range-Doppler plot with sub-bands
+  rawdata.py                capture byte order, lossless int16 storage, loading, plain spectrum
+  view.py                   raw-signal plot: live, replayed or saved
 test/                     unit tests: C (Makefile, rfparser_test.c, stubs/) and
                           Python (test_*.py; data/ holds the .cfg each profile must render to)
-docs/                     documentation; raw_data.ipynb is a hands-on guide to raw DDM data
+docs/                     documentation
 pyproject.toml, uv.lock   Python project and locked dependencies (managed with uv)
 out/                      build output (not tracked)
 ```
@@ -121,7 +119,7 @@ sudo udevadm control --reload-rules
 ### Python
 
 Install [uv](https://docs.astral.sh/uv/). The host tools need Python ≥ 3.11, numpy, matplotlib,
-pyserial and xwr; `pytest`, `ruff` and JupyterLab (for `docs/raw_data.ipynb`) are development dependencies. Create the environment from `uv.lock`:
+pyserial and xwr; `pytest` and `ruff` are development dependencies. Create the environment from `uv.lock`:
 
 ```sh
 uv sync
@@ -146,7 +144,7 @@ through `uv run`, which also syncs the environment if needed.
 
 The full log is in `out/build.log`. The image holds the MSS program and TI's radar subsystem
 firmware only; there is no DSP program. The same image runs on the AWR1843AOPEVM; the antenna
-layout matters only to the host decoder.
+layout matters only to processing on the PC.
 
 ## Flashing
 
@@ -213,7 +211,7 @@ prints one line and exits with status 1.
 
 The sub-band and TX counts are read from the configuration (`ddmCfg` and the TX mask of
 `chirpCfg`), and range and velocity from `profileCfg` and `frameCfg`, so the tools follow a
-changed chirp configuration without extra options. `ddm decode` reads the configuration
+changed chirp configuration without extra options. `ddm show` reads the configuration
 saved in the capture file.
 
 ### Raw data capture
@@ -221,25 +219,23 @@ saved in the capture file.
 With the radar mounted on a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM) capture card,
 the ADC samples of every chirp are recorded on the PC.
 `ddm capture` configures the radar and records frames with the capture card driver from
-[xwr](https://github.com/RadarML/xwr); `ddm decode` decodes them in Python.
+[xwr](https://github.com/RadarML/xwr). Nothing is processed on the way: the PC stores and
+plots the samples as the radar produced them.
 
 ```sh
 uv run ddm capture profiles/template.toml -n 20   # -> captures/YYYYmmdd-HHMMSS_template.npz
-uv run ddm decode captures/*_template.npz --snapshot raw-map.png
-uv run ddm live profiles/template.toml                     # raw signal and spectrum
-uv run ddm live profiles/template.toml --decoded --remove-static
+uv run ddm live profiles/template.toml           # raw signal and spectrum, live
+uv run ddm show captures/*_template.npz           # the same plot for a capture
 ```
 
 | Command | Does | Options |
 |---|---|---|
 | `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames unchanged as int16 `iq[frame, chirp, rx, sample, 2]` (I, Q) together with the configuration text. A `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
-| `ddm live PROFILE` | Live raw view of RX 0, with no processing besides the FFTs: the first chirp's ADC samples (I and Q, in ADC counts) and the range-Doppler spectrum without windows, static removal or detection, as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. With `--decoded`, a processed three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--decoded`, `--remove-static` (with `--decoded`: removes every TX copy of stationary objects), `--cli PORT` |
-| `ddm decode CAPTURE.npz` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map, and the strongest targets beyond 0.25 m (past the TX-to-RX leakage) with range and velocity. With DDM, targets are found on the folded map and also listed with their TX0 sub-band, the level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
+| `ddm live PROFILE` | Live raw view of RX 0, with no processing besides the FFTs: the first chirp's ADC samples (I and Q, in ADC counts) and the range-Doppler spectrum without windows, static removal or detection, as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. Close the window to stop the radar and capture card. | `--cli PORT` |
+| `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop at the frame period. Older complex64 captures also load. | `--snapshot FILE.png` (save the first frame instead) |
 
 DDM or TDM is read from the configuration: without `ddmCfg` the frame is TDM, with chirps
-ordered TX0, TX1, TX2 in every loop. A TDM frame gets a Doppler FFT over the loops for each TX,
-and its virtual array is corrected for the target's motion between the TX chirps
-(exp(−j2π·k·m / (N_TX·N_loops)) for TX *m* at signed Doppler bin *k*).
+ordered TX0, TX1, TX2 in every loop.
 
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger
 `net.core.rmem_max`, switch settings) is described in xwr's
@@ -258,10 +254,9 @@ uv run pytest      # host tools (Python)
 
 | Test | What it checks |
 |---|---|
-| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, bit-exact int16 capture storage, the unwindowed spectrum, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
+| `test_rawdata.py` (pytest) | Frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, bit-exact int16 capture storage (and loading of older captures), the unwindowed spectrum, spectrum axes that place a simulated target at its true range and velocity, and the `ddm show` plot of a capture. |
 | `test_cfg.py` (pytest) | `.cfg` parsing, `ddm_params()` and `range_axis()`. |
-| `test_profile.py` (pytest) | `test/data/aop.toml` (the chirp of TI's `profile_3d_aop.cfg`), with the gesture and TDM settings, gives the commands of its `test/data/*.cfg` fixture in order; `profiles/template.toml` loads and passes the limits; a TI-style `.cfg` (`test/data/ti_style.cfg`) is sent unchanged; derived numbers, `[extra]` lines, rejected typos, and TOML errors versus `.cfg` warnings. |
-| `test_notebook.py` (pytest) | Executes `docs/raw_data.ipynb` on simulated data and checks that its step-by-step decoding matches `ddm.dsp`. |
+| `test_profile.py` (pytest) | `test/data/aop.toml` (the chirp of TI's `profile_3d_aop.cfg`), with DDM and with TDM, gives the commands of its `test/data/*.cfg` fixture in order; `profiles/template.toml` loads and passes the limits; a TI-style `.cfg` (`test/data/ti_style.cfg`) is sent unchanged; derived numbers, `[extra]` lines, rejected typos, and TOML errors versus `.cfg` warnings. |
 | `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
@@ -276,8 +271,8 @@ PASS DDM all-TX, 4 bands          ret=     0 cubeTx=1 ddmNumTx=3 dopplerChirps=1
 `make -C test clean` removes the binaries.
 
 The firmware itself has no automated on-target tests. To check a change on hardware, run
-`ddm decode` on a capture of a static scene: the empty sub-band should be tens of dB below the
-TX copies. To compare with TDM, capture the same scene with `tdm = true`.
+`ddm show` on a capture of a static scene: each static object should appear once per TX, in
+consecutive sub-bands, and the empty sub-band should be tens of dB below the TX copies. To compare with TDM, capture the same scene with `tdm = true`.
 
 ## Linting
 
@@ -325,11 +320,10 @@ Host tools (Python): type hints, `from __future__ import annotations`, standard-
   (`mmw_cli.c`), store the value in `MmwDemo_MSS_MCB` (`mmw_mss.h`), and decide whether
   `sensorStop` should clear it (as for `ddmCfg`).
 - **Different number of sub-bands or TX.** The phase codes are in `MmwDemo_ddmPhaseShift()`
-  (`mss_main.c`); the host decoder takes both from the configuration. Extend
-  `test/test_dsp.py` before testing on hardware.
+  (`mss_main.c`); the host tools read both from the configuration.
 - **Another device.** Check the sign of the phase shift in the IF signal on that device; the
   AWR1843AOP inverts it (see `MmwDemo_ddmPhaseShift()`).
 - **New host tool.** Add a subcommand in `host/ddm/cli.py`, reuse `radar.py`, `dca.py` and
-  `dsp.py`, log with `logging.getLogger(__name__)`, add dependencies with `uv add`, and run
+  `rawdata.py`, log with `logging.getLogger(__name__)`, add dependencies with `uv add`, and run
   `uv run ruff check` and `uv run pytest`.
 - **New profile.** Copy `profiles/template.toml`, check it with `ddm cfg`, and follow the rules in [configuration.md](configuration.md).

@@ -1,9 +1,9 @@
 # Architecture
 
 This page explains how DDM-MIMO is split between the radar and the PC: the radar transmits the
-phase-coded chirps and streams raw ADC samples, and the PC separates the transmitters and does
-all the signal processing. It covers the signal model, the firmware, the raw data format, the
-host decoder and where each part lives in the code. Firmware paths are relative to
+phase-coded chirps and streams raw ADC samples, and all signal processing is left to the PC.
+It covers the signal model, the firmware, the raw data format and where each part lives in the
+code. Firmware paths are relative to
 `sdk/packages/ti/`.
 
 ## Terms
@@ -45,7 +45,7 @@ With the shipped profile (`profiles/template.toml`, N = 4, 32 loops):
 | Max unambiguous velocity | ±6.9 m/s | ±5.96 m/s |
 | Velocity resolution | 0.43 m/s | 0.093 m/s |
 | Chirps per TX per frame | 32 | 128 |
-| Motion phase between TX copies | compensated on the host | none (TX simultaneous) |
+| Motion phase between TX copies | one chirp period per TX (left in the data) | none (TX simultaneous) |
 | Virtual array | 12 (3 TX × 4 RX) | 12, same geometry |
 | Raw data per frame | 384 KB | 512 KB |
 
@@ -92,25 +92,6 @@ Each frame is `[chirp, rx, sample]` complex 16-bit samples, chirps in transmit o
 Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_iq` reorders into int16 (I, Q) pairs. `ddm capture`
 saves the frames unchanged with the configuration text in a `.npz` file; `load_capture`
 returns them as complex samples.
-
-## Host processing
-
-`host/ddm/dsp.py` holds the decoder; `ddm decode` runs it on a capture and `ddm live --decoded`
-on every frame. [raw_data.ipynb](raw_data.ipynb) walks through the same steps in plain numpy.
-
-| Step | Function | What it does |
-|---|---|---|
-| Range and Doppler FFT | `doppler_spectrum` | Hann-windowed FFTs over samples and chirps: `[Doppler, rx, range]` |
-| Static removal (optional) | `remove_static` | Subtracts each chirp definition's mean over the loops; this removes every TX copy of a static target |
-| Fold | `fold` | Averages the N sub-bands: the copies of one target land on the same folded bin |
-| Detection | `find_targets` | Peaks `DETECTION_DB` above the median of the folded map, beyond `MIN_RANGE_M` (TX-to-RX leakage) |
-| TX0 sub-band | `tx0_band` | The first sub-band of the strongest run of `numTx` consecutive sub-bands (cyclic) |
-| Virtual array | `ddm_virtual_array` | Reads TX *k*'s copy from sub-band TX0 + *k*: `[folded bin, range, tx, rx]` |
-| Velocity | `signed_doppler_bin` | TX0's unfolded Doppler bin gives the velocity over the full ±λ / (4 · Tc) |
-| Angle | `decode_frame` | FFT across the 3 TX of the virtual array gives azimuth |
-
-TDM frames (no `ddmCfg`) take `tdm_spectrum` (a Doppler FFT over the loops for each TX) and
-`tdm_virtual_array`, which removes the target's motion between the TX chirps.
 
 ## Changed files
 

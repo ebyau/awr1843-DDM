@@ -1,7 +1,7 @@
 [project]
 name = "awr1843-ddm-host"
 version = "0.1.0"
-description = "Host tools for the AWR1843AOP DDM-MIMO firmware: configure the radar and decode its output"
+description = "Host tools for the AWR1843AOP DDM-MIMO firmware: configure the radar, capture and view its raw ADC data"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,9 +20,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "ipykernel>=7.4.0",
-    "jupyterlab>=4.6.5",
-    "nbconvert>=7.17.2",
     "pytest>=9.2.0",
     "ruff>=0.6",
 ]

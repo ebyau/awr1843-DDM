@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""ddm: configure the AWR1843AOP DDM-MIMO raw-data firmware, capture and decode its ADC data.
+"""ddm: configure the AWR1843AOP DDM-MIMO raw-data firmware, capture and view its ADC data.
 
 A PROFILE is a TOML profile (profiles/template.toml) or a TI .cfg file, chosen by its suffix.
 TOML profiles are rendered to .cfg text; .cfg files are sent as they are.
@@ -16,8 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cfg import chirp_axes, mimo_params, parse_cfg
-from .dsp import MIN_RANGE_M, find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
+from .cfg import parse_cfg
 from .profile import derived, load
 from .radar import CLI_PORT
 from .rawdata import load_capture, save_capture
@@ -58,71 +57,26 @@ def cmd_capture(args: argparse.Namespace) -> None:
     log.info("saved %d frames of %s (chirp, rx, sample, I/Q) to %s", len(captured), captured[0].shape, out)
 
 
-def print_ddm_targets(power: np.ndarray, bands: int, num_tx: int, min_range_bin: int,
-                      range_step: float, velocity_step: float) -> None:
-    """The strongest targets of a DDM range-Doppler map with their sub-band levels."""
-    num_chirps = power.shape[1]
-    width = num_chirps // bands
-    print(" range(m)  v(m/s)  TX0  " + "  ".join(f"band{b}(dB)" for b in range(bands))
-          + "  weakest TX - mean spare (dB)")
-    for range_bin, folded_bin in find_targets(fold(power, bands), min_range_bin):
-        band_power = power[range_bin, folded_bin::width]
-        tx0 = int(tx0_band(band_power, num_tx))
-        tx_bands = [(tx0 + k) % bands for k in range(num_tx)]
-        spare = np.delete(band_power, tx_bands)
-        margin_db = 10 * np.log10(band_power[tx_bands].min() / spare.mean())
-        signed_bin = signed_doppler_bin(folded_bin, tx0, width, num_chirps)
-        levels = 10 * np.log10(band_power / band_power.max())
-        print(f"{range_bin * range_step:9.2f} {signed_bin * velocity_step:7.2f} {tx0:4d}  "
-              + "  ".join(f"{level:10.1f}" for level in levels) + f"  {margin_db:28.1f}")
+def cmd_show(args: argparse.Namespace) -> None:
+    """Replay a capture's raw signal in a loop, or save its first frame as an image."""
+    from .view import replay, snapshot
 
-
-def cmd_decode(args: argparse.Namespace) -> None:
-    """Decode a raw DDM or TDM capture: range-Doppler map and the strongest targets."""
-    import matplotlib.pyplot as plt
-
-    from .plotting import draw_axes
-
-    captured, text = load_capture(args.capture)
+    frames, text = load_capture(args.capture)
     cfg = parse_cfg(text)
-    bands, num_tx = mimo_params(cfg)
-    num_chirps = captured.shape[1]
-    range_step, velocity_step = chirp_axes(cfg, num_chirps)
-    power = range_doppler_power(captured, 0 if bands else num_tx)
-    db = 10 * np.log10(power / power.max())
-    min_range_bin = int(np.ceil(MIN_RANGE_M / range_step))
-    log.info("%d %s frames; %.3f m and %.3f m/s per bin", len(captured), "DDM" if bands else "TDM",
-             range_step, velocity_step)
-    if bands:
-        print_ddm_targets(power, bands, num_tx, min_range_bin, range_step, velocity_step)
-    else:
-        print(" range(m)  v(m/s)  level(dB)")
-        for range_bin, doppler_bin in find_targets(db, min_range_bin):
-            velocity = signed_doppler_bin(doppler_bin, 0, 0, power.shape[1]) * velocity_step
-            print(f"{range_bin * range_step:9.2f} {velocity:7.2f} {db[range_bin, doppler_bin]:10.1f}")
-
-    fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
-    image = draw_axes(ax, db, range_step, bands, f"Raw-data range-Doppler map, {len(captured)} frames")
-    fig.colorbar(image, ax=ax, label="Level relative to peak (dB)", shrink=0.8)
+    log.info("%d frames of %s (chirp, rx, sample)", len(frames), frames.shape[1:])
     if args.snapshot is not None:
-        fig.savefig(args.snapshot, dpi=120)
+        snapshot(frames[0], cfg, args.snapshot)
         log.info("saved %s", args.snapshot)
     else:
-        plt.show()
+        replay(frames, cfg)
 
 
 def cmd_live(args: argparse.Namespace) -> None:
-    """Live view: the unprocessed ADC signal and its spectrum, or with --decoded the
-    DDM-decoded range-velocity and top views."""
-    from .view import decoded_view, raw_view
+    """Live raw signal of RX 0: ADC samples and the unwindowed range-Doppler spectrum."""
+    from .view import live_view
 
-    if args.remove_static and not args.decoded:
-        raise ValueError("--remove-static works only with --decoded; the raw view shows the signal as is")
     text, cfg = load(args.profile)
-    if args.decoded:
-        decoded_view(text, cfg, args.cli, args.remove_static)
-    else:
-        raw_view(text, cfg, args.cli)
+    live_view(text, cfg, args.cli)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -151,15 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("-o", "--out", type=Path, metavar="FILE",
                      help=f"output .npz (default {CAPTURE_DIR}/YYYYmmdd-HHMMSS_<profile>.npz)")
 
-    sub = add(cmd_decode, "decode", [])
+    sub = add(cmd_show, "show", [])
     sub.add_argument("capture", type=Path, metavar="CAPTURE.npz")
-    sub.add_argument("--snapshot", type=Path, metavar="PNG", help="save the range-Doppler map to this PNG")
+    sub.add_argument("--snapshot", type=Path, metavar="PNG", help="save the first frame's plot to this PNG")
 
     sub = add(cmd_live, "live", [cli_port])
     sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--decoded", action="store_true",
-                     help="processed view: Hann windows, DDM decoding, detected cells and top view")
-    sub.add_argument("--remove-static", action="store_true", help="with --decoded: hide stationary objects")
     return parser
 
 

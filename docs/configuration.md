@@ -42,10 +42,8 @@ limit:** each TX has a 6-bit phase shifter, so a phase can only be set in 64 ste
 The phase step between chirps is 360° / `numBands`, which is a whole number of steps only if
 `numBands` divides 64.
 
-On the host, the TX0 sub-band is found as the first of the strongest run of consecutive
-sub-bands, one per TX, so any value above the number of TX resolves velocity. Extra empty
-sub-bands cost detection sensitivity: the fold averages every sub-band, so empty ones add noise
-without adding signal.
+With more sub-bands than TX, the TX copies of a target sit in consecutive sub-bands and at
+least one sub-band stays empty, which marks where TX0's copy starts.
 
 Behaviour:
 

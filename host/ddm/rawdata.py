@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Raw ADC samples exactly as the radar produced them: the capture card's byte order,
-lossless int16 storage and loading of captures.
+lossless int16 storage, loading of captures, and their plain (unwindowed) spectrum.
 
 A capture holds `iq` int16 [frame, chirp, rx, sample, 2] (I, Q) with no window, filter or
 scaling applied, and `config`, the .cfg text the radar ran.
@@ -43,3 +43,9 @@ def load_capture(path: Path) -> tuple[np.ndarray, str]:
     with np.load(path) as data:
         frames = iq_to_complex(data["iq"]) if "iq" in data else data["frames"]
         return frames, str(data["config"])
+
+
+def spectrum(frames: np.ndarray) -> np.ndarray:
+    """[..., chirp, rx, sample] -> complex [..., Doppler, rx, range]: plain FFTs over fast
+    and slow time, no window."""
+    return np.fft.fft(np.fft.fft(frames, axis=-1), axis=-3)

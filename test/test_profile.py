@@ -32,7 +32,6 @@ def aop(**overrides: dict) -> Profile:
 
 @pytest.mark.parametrize(("fixture", "overrides"), [
     ("raw", {}),
-    ("raw_fine", {"chirp": {"idle_us": 435}, "frame": {"loops": 16, "period_ms": 50}}),
     ("tdm", {"mimo": {"tdm": True}}),
 ])
 def test_fixture_renders_golden_cfg(fixture: str, overrides: dict) -> None:
@@ -41,7 +40,7 @@ def test_fixture_renders_golden_cfg(fixture: str, overrides: dict) -> None:
 
 
 def test_every_fixture_is_tested() -> None:
-    assert {p.stem for p in DATA.glob("*.cfg")} - {TI_PROFILE.stem} == {"raw", "raw_fine", "tdm"}
+    assert {p.stem for p in DATA.glob("*.cfg")} - {TI_PROFILE.stem} == {"raw", "tdm"}
 
 
 def test_load_checks_profile_and_sends_ti_cfg_unchanged(caplog: pytest.LogCaptureFixture) -> None:

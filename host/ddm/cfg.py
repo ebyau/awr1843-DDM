@@ -85,17 +85,6 @@ def is_tdm(cfg: Config) -> bool:
     return ddm_params(cfg)[0] == 0
 
 
-def mimo_params(cfg: Config) -> tuple[int, int]:
-    """(Doppler sub-bands, TX) of a DDM frame, or (0, TX) of a TDM frame, which has one chirp
-    per TX in every loop."""
-    bands, num_tx = ddm_params(cfg)
-    if bands == 0:
-        return 0, chirps_per_loop(cfg)
-    if bands <= num_tx:
-        raise ValueError(f"ddmCfg {bands} needs more sub-bands than the {num_tx} TX")
-    return bands, num_tx
-
-
 def doppler_bins(cfg: Config) -> int:
     """Doppler FFT size (no zero padding): every chirp with DDM, one chirp per loop with TDM."""
     if is_tdm(cfg):
