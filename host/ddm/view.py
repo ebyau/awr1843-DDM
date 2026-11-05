@@ -106,14 +106,12 @@ def run_live(fig: plt.Figure, cfg_text: str, cli_port: str,
             log.warning("capture did not stop; send sensorStop to the radar before the next run")
 
 
-def raw_view(cfg_text: str, cfg: Config, cli_port: str, rx: int) -> None:
-    """Live view of one RX with no processing beyond the FFTs: the first chirp's ADC
+def raw_view(cfg_text: str, cfg: Config, cli_port: str) -> None:
+    """Live view of RX 0 with no processing beyond the FFTs: the first chirp's ADC
     samples (I and Q), and the range-Doppler spectrum without windows, static removal or
     detection, as 20 log10 |FFT| on a fixed scale (zero Doppler centred)."""
     bands, _ = mimo_params(cfg)
-    num_chirps, num_rx, num_range = raw_frame_shape(cfg)
-    if not 0 <= rx < num_rx:
-        raise ValueError(f"--rx must be 0..{num_rx - 1}")
+    num_chirps, _, num_range = raw_frame_shape(cfg)
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     half = num_chirps // 2
 
@@ -122,12 +120,12 @@ def raw_view(cfg_text: str, cfg: Config, cli_port: str, rx: int) -> None:
     i_line, = ax_adc.plot(samples, np.zeros(num_range), color=INK, linewidth=1, label="I")
     q_line, = ax_adc.plot(samples, np.zeros(num_range), color=Q_COLOUR, linewidth=1, label="Q")
     ax_adc.legend(loc="lower right", bbox_to_anchor=(1, 1), ncols=2, frameon=False)
-    style(ax_adc, f"ADC samples, chirp 0, RX {rx}", "Sample (fast time)", "ADC counts (int16)")
+    style(ax_adc, "ADC samples, chirp 0, RX 0", "Sample (fast time)", "ADC counts (int16)")
     image = ax_rd.imshow(np.zeros((num_range, num_chirps)), cmap=CMAP, aspect="auto", origin="lower",
                          interpolation="nearest",
                          extent=(-half - 0.5, num_chirps - half - 0.5,
                                  -range_step / 2, (num_range - 0.5) * range_step))
-    style(ax_rd, f"Spectrum, RX {rx}, no window ({velocity_step:.3g} m/s per bin)",
+    style(ax_rd, f"Spectrum, RX 0, no window ({velocity_step:.3g} m/s per bin)",
           "Doppler bin (every chirp; DDM: TX k shifted k sub-bands)", "Range (m)")
     for band in range(1, bands):  # sub-band edges, as markers only
         ax_rd.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
@@ -136,12 +134,12 @@ def raw_view(cfg_text: str, cfg: Config, cli_port: str, rx: int) -> None:
     scale = {"adc": 1.0}  # set by the first frame, then only grows (ADC) or stays fixed (spectrum)
 
     def draw(frame: np.ndarray) -> list[Artist]:
-        chirp = frame[0, rx]
+        chirp = frame[0, 0]
         i_line.set_ydata(chirp.real)
         q_line.set_ydata(chirp.imag)
         scale["adc"] = max(scale["adc"], float(np.abs(chirp.real).max()), float(np.abs(chirp.imag).max()))
         ax_adc.set_ylim(-1.1 * scale["adc"], 1.1 * scale["adc"])
-        db = 20 * np.log10(np.abs(np.fft.fftshift(spectrum(frame)[:, rx], axes=0)).T + 1e-6)
+        db = 20 * np.log10(np.abs(np.fft.fftshift(spectrum(frame[:, :1])[:, 0], axes=0)).T + 1e-6)
         image.set_data(db)
         if "peak" not in scale:
             scale["peak"] = np.ceil(db.max() / 10) * 10

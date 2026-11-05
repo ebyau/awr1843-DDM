@@ -122,7 +122,7 @@ def cmd_live(args: argparse.Namespace) -> None:
     if args.decoded:
         decoded_view(text, cfg, args.cli, args.remove_static)
     else:
-        raw_view(text, cfg, args.cli, args.rx)
+        raw_view(text, cfg, args.cli)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -157,7 +157,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = add(cmd_live, "live", [cli_port])
     sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--rx", type=int, default=0, help="RX antenna shown in the raw view (default 0)")
     sub.add_argument("--decoded", action="store_true",
                      help="processed view: Hann windows, DDM decoding, detected cells and top view")
     sub.add_argument("--remove-static", action="store_true", help="with --decoded: hide stationary objects")
