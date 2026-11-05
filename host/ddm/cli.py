@@ -20,6 +20,7 @@ from .cfg import chirp_axes, mimo_params, parse_cfg
 from .dsp import MIN_RANGE_M, find_targets, fold, range_doppler_power, signed_doppler_bin, tx0_band
 from .profile import derived, load
 from .radar import CLI_PORT
+from .rawdata import load_capture, save_capture
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def cmd_cfg(args: argparse.Namespace) -> None:
 
 
 def cmd_capture(args: argparse.Namespace) -> None:
-    """Record raw ADC frames through a DCA1000EVM capture card."""
+    """Record raw ADC frames (int16 I/Q, unprocessed) through a DCA1000EVM capture card."""
     from .dca import capture, open_capture_card  # xwr loads only for the capture commands
 
     text, _ = load(args.profile)
@@ -53,9 +54,8 @@ def cmd_capture(args: argparse.Namespace) -> None:
         raise TimeoutError("no frames received; check the LVDS cable and capture card")
     if len(captured) < args.frames:
         log.warning("stream timed out after %d of %d frames", len(captured), args.frames)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out, frames=np.stack(captured), config=text)
-    log.info("saved %d frames of %s (chirp, rx, sample) to %s", len(captured), captured[0].shape, out)
+    save_capture(out, np.stack(captured), text)
+    log.info("saved %d frames of %s (chirp, rx, sample, I/Q) to %s", len(captured), captured[0].shape, out)
 
 
 def print_ddm_targets(power: np.ndarray, bands: int, num_tx: int, min_range_bin: int,
@@ -83,8 +83,8 @@ def cmd_decode(args: argparse.Namespace) -> None:
 
     from .plotting import draw_axes
 
-    data = np.load(args.capture)
-    captured, cfg = data["frames"], parse_cfg(str(data["config"]))
+    captured, text = load_capture(args.capture)
+    cfg = parse_cfg(text)
     bands, num_tx = mimo_params(cfg)
     num_chirps = captured.shape[1]
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
@@ -112,11 +112,17 @@ def cmd_decode(args: argparse.Namespace) -> None:
 
 
 def cmd_live(args: argparse.Namespace) -> None:
-    """Live raw-data view: raw range-Doppler, DDM-decoded range-velocity and top view."""
-    from .view import live_view
+    """Live view: the unprocessed ADC signal and its spectrum, or with --decoded the
+    DDM-decoded range-velocity and top views."""
+    from .view import decoded_view, raw_view
 
+    if args.remove_static and not args.decoded:
+        raise ValueError("--remove-static works only with --decoded; the raw view shows the signal as is")
     text, cfg = load(args.profile)
-    live_view(text, cfg, args.cli, args.remove_static)
+    if args.decoded:
+        decoded_view(text, cfg, args.cli, args.remove_static)
+    else:
+        raw_view(text, cfg, args.cli, args.rx)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -151,7 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = add(cmd_live, "live", [cli_port])
     sub.add_argument("profile", type=Path, metavar="PROFILE")
-    sub.add_argument("--remove-static", action="store_true", help="hide stationary objects")
+    sub.add_argument("--rx", type=int, default=0, help="RX antenna shown in the raw view (default 0)")
+    sub.add_argument("--decoded", action="store_true",
+                     help="processed view: Hann windows, DDM decoding, detected cells and top view")
+    sub.add_argument("--remove-static", action="store_true", help="with --decoded: hide stationary objects")
     return parser
 
 

@@ -18,7 +18,6 @@ from ddm.cfg import (
     range_axis,
     raw_frame_shape,
 )
-from ddm.dca import iiqq_to_complex
 from ddm.dsp import (
     ddm_virtual_array,
     decode_frame,
@@ -28,16 +27,18 @@ from ddm.dsp import (
     range_doppler_power,
     remove_static,
     signed_doppler_bin,
+    spectrum,
     tdm_spectrum,
     tdm_virtual_array,
     tx0_band,
 )
+from ddm.rawdata import iiqq_to_iq, iq_to_complex, load_capture, save_capture
 
 RAW_CFG = Path(__file__).parent / "data" / "raw.cfg"
 
 
 def to_iiqq(iq: np.ndarray) -> bytes:
-    """Inverse of iiqq_to_complex: Q0 Q1 I0 I1 Q2 Q3 I2 I3 ... per RX."""
+    """Inverse of iiqq_to_iq: Q0 Q1 I0 I1 Q2 Q3 I2 I3 ... per RX."""
     iiqq = np.empty((*iq.shape[:-1], 2 * iq.shape[-1]), dtype="<i2")
     iiqq[..., 0::4], iiqq[..., 1::4] = iq.imag[..., 0::2], iq.imag[..., 1::2]
     iiqq[..., 2::4], iiqq[..., 3::4] = iq.real[..., 0::2], iq.real[..., 1::2]
@@ -60,16 +61,41 @@ def test_raw_frame_shape_rejects_unsupported_streams(line: str, replacement: str
 
 
 def test_iiqq_byte_order() -> None:
-    """Q0 Q1 I0 I1 from the capture card is I0+jQ0, I1+jQ1."""
+    """Q0 Q1 I0 I1 from the capture card is (I0, Q0), (I1, Q1)."""
     data = np.array([1, 2, 3, 4], dtype="<i2").tobytes()
-    assert np.array_equal(iiqq_to_complex(data, (1, 1, 2)), np.array([[[3 + 1j, 4 + 2j]]]))
+    iq = iiqq_to_iq(data, (1, 1, 2))
+    assert iq.dtype == np.int16
+    assert np.array_equal(iq, [[[[3, 1], [4, 2]]]])
+    assert np.array_equal(iq_to_complex(iq), [[[3 + 1j, 4 + 2j]]])
 
 
 def test_iiqq_round_trip() -> None:
     rng = np.random.default_rng(0)
     shape = (4, 2, 8)
     iq = (rng.integers(-2000, 2000, shape) + 1j * rng.integers(-2000, 2000, shape)).astype(np.complex64)
-    assert np.array_equal(iiqq_to_complex(to_iiqq(iq), shape), iq)
+    complex_iq = iq_to_complex(iiqq_to_iq(to_iiqq(iq), shape))
+    assert complex_iq.dtype == np.complex64
+    assert np.array_equal(complex_iq, iq)
+
+
+def test_capture_round_trip_is_bit_exact(tmp_path: Path) -> None:
+    """Captures keep the int16 samples unchanged; older complex64 captures still load."""
+    rng = np.random.default_rng(1)
+    iq = rng.integers(-32768, 32768, (2, 4, 4, 8, 2), dtype=np.int16)
+    save_capture(tmp_path / "new.npz", iq, "cfg text")
+    frames, text = load_capture(tmp_path / "new.npz")
+    assert text == "cfg text"
+    assert np.array_equal(frames.real, iq[..., 0]) and np.array_equal(frames.imag, iq[..., 1])
+    np.savez_compressed(tmp_path / "old.npz", frames=frames, config="cfg text")
+    assert np.array_equal(load_capture(tmp_path / "old.npz")[0], frames)
+
+
+def test_spectrum_is_unwindowed_unless_asked() -> None:
+    rng = np.random.default_rng(2)
+    frame = rng.standard_normal((16, 4, 32)) + 1j * rng.standard_normal((16, 4, 32))
+    assert np.allclose(spectrum(frame), np.fft.fft(np.fft.fft(frame, axis=-1), axis=0))
+    windowed = frame * np.hanning(32) * np.hanning(16)[:, None, None]
+    assert np.allclose(doppler_spectrum(frame), spectrum(windowed))
 
 
 def test_chirp_axes_match_firmware_profile() -> None:

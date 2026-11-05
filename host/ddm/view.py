@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
-"""Live matplotlib view of raw frames from the capture card."""
+"""Live matplotlib views of raw frames from the capture card: the unprocessed signal, or
+the DDM-decoded maps."""
 
 from __future__ import annotations
 
@@ -7,7 +8,7 @@ import contextlib
 import logging
 import queue
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +18,9 @@ from matplotlib.image import AxesImage
 
 from .cfg import Config, chirp_axes, chirps_per_loop, doppler_bins, mimo_params, raw_frame_shape
 from .dca import capture, open_capture_card
-from .dsp import AZIMUTH_BINS, decode_frame
-from .plotting import CMAP, centre_bands, draw_axes, style
+from .dsp import AZIMUTH_BINS, decode_frame, spectrum
+from .plotting import CMAP, INK, centre_bands, draw_axes, style
+from .rawdata import iq_to_complex
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +28,8 @@ TOP_VIEW_PIXELS = 256  # along y; x has twice as many
 GAMMA = 0.5
 PCLIP = 0.1
 POLL_MS = 10
+Q_COLOUR = "#d9822b"
+RAW_RANGE_DB = 80.0  # raw spectrum colour scale: this far below the first frame's peak
 
 
 def top_view_lookup(num_range: int, range_step: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -70,8 +74,85 @@ def read_raw_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray
         stream.close()
 
 
-def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> None:
-    """Live raw-data view from the capture card (DDM or TDM): raw range-Doppler, decoded
+def run_live(fig: plt.Figure, cfg_text: str, cli_port: str,
+             draw: Callable[[np.ndarray], list[Artist]], blit: bool) -> None:
+    """Streams frames from the capture card and calls draw on the newest complex frame
+    [chirp, rx, sample] until the window closes."""
+    latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
+    stop = threading.Event()
+    stream = capture(cfg_text, cli_port, open_capture_card())
+    reader = threading.Thread(target=read_raw_frames, args=(stream, latest, stop), daemon=True)
+
+    def update(_: int) -> list[Artist]:
+        try:
+            frame = latest.get_nowait()
+        except queue.Empty:
+            if not reader.is_alive():
+                plt.close(fig)
+            return []  # nothing new to redraw
+        return draw(iq_to_complex(frame))
+
+    reader.start()
+    try:
+        # Poll often: the timer waits its interval after each update, not from its start.
+        _animation = FuncAnimation(fig, update, interval=POLL_MS, blit=blit, cache_frame_data=False)
+        plt.show()
+        if not reader.is_alive():
+            raise RuntimeError("capture stopped; see the error above")
+    finally:
+        stop.set()
+        reader.join(timeout=5)
+        if reader.is_alive():
+            log.warning("capture did not stop; send sensorStop to the radar before the next run")
+
+
+def raw_view(cfg_text: str, cfg: Config, cli_port: str, rx: int) -> None:
+    """Live view of one RX with no processing beyond the FFTs: the first chirp's ADC
+    samples (I and Q), and the range-Doppler spectrum without windows, static removal or
+    detection, as 20 log10 |FFT| on a fixed scale (zero Doppler centred)."""
+    bands, _ = mimo_params(cfg)
+    num_chirps, num_rx, num_range = raw_frame_shape(cfg)
+    if not 0 <= rx < num_rx:
+        raise ValueError(f"--rx must be 0..{num_rx - 1}")
+    range_step, velocity_step = chirp_axes(cfg, num_chirps)
+    half = num_chirps // 2
+
+    fig, (ax_adc, ax_rd) = plt.subplots(1, 2, figsize=(15, 5.5), layout="constrained")
+    samples = np.arange(num_range)
+    i_line, = ax_adc.plot(samples, np.zeros(num_range), color=INK, linewidth=1, label="I")
+    q_line, = ax_adc.plot(samples, np.zeros(num_range), color=Q_COLOUR, linewidth=1, label="Q")
+    ax_adc.legend(loc="lower right", bbox_to_anchor=(1, 1), ncols=2, frameon=False)
+    style(ax_adc, f"ADC samples, chirp 0, RX {rx}", "Sample (fast time)", "ADC counts (int16)")
+    image = ax_rd.imshow(np.zeros((num_range, num_chirps)), cmap=CMAP, aspect="auto", origin="lower",
+                         interpolation="nearest",
+                         extent=(-half - 0.5, num_chirps - half - 0.5,
+                                 -range_step / 2, (num_range - 0.5) * range_step))
+    style(ax_rd, f"Spectrum, RX {rx}, no window ({velocity_step:.3g} m/s per bin)",
+          "Doppler bin (every chirp; DDM: TX k shifted k sub-bands)", "Range (m)")
+    for band in range(1, bands):  # sub-band edges, as markers only
+        ax_rd.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
+                      linestyle=(0, (4, 3)))
+    fig.colorbar(image, ax=ax_rd, label="dB re 1 ADC count", shrink=0.8)
+    scale = {"adc": 1.0}  # set by the first frame, then only grows (ADC) or stays fixed (spectrum)
+
+    def draw(frame: np.ndarray) -> list[Artist]:
+        chirp = frame[0, rx]
+        i_line.set_ydata(chirp.real)
+        q_line.set_ydata(chirp.imag)
+        scale["adc"] = max(scale["adc"], float(np.abs(chirp.real).max()), float(np.abs(chirp.imag).max()))
+        ax_adc.set_ylim(-1.1 * scale["adc"], 1.1 * scale["adc"])
+        db = 20 * np.log10(np.abs(np.fft.fftshift(spectrum(frame)[:, rx], axes=0)).T + 1e-6)
+        image.set_data(db)
+        if "peak" not in scale:
+            scale["peak"] = np.ceil(db.max() / 10) * 10
+            image.set_clim(scale["peak"] - RAW_RANGE_DB, scale["peak"])
+        return []
+
+    run_live(fig, cfg_text, cli_port, draw, blit=False)
+
+
+def decoded_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> None:
+    """Live processed view from the capture card (DDM or TDM): raw range-Doppler, decoded
     range-velocity and top view. Brightness follows the xwr demo: amplitude raised to GAMMA (linear in the
     top view), the colour scale clipped to the PCLIP percentiles."""
     bands, num_tx = mimo_params(cfg)
@@ -96,18 +177,8 @@ def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> N
 
     # Blitting redraws only these artists; the band lines go last to stay on top.
     artists: list[Artist] = [raw_image, vel_image, top_image, *ax_raw.lines]
-    latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
-    stop = threading.Event()
-    stream = capture(cfg_text, cli_port, open_capture_card())
-    reader = threading.Thread(target=read_raw_frames, args=(stream, latest, stop), daemon=True)
 
-    def update(_: int) -> list[Artist]:
-        try:
-            frame = latest.get_nowait()
-        except queue.Empty:
-            if not reader.is_alive():
-                plt.close(fig)
-            return []  # nothing new to redraw
+    def draw(frame: np.ndarray) -> list[Artist]:
         raw, velocity, azimuth = decode_frame(frame, bands, num_tx, static_loop)
         show(raw_image, centre_bands(raw, bands))
         show(vel_image, velocity, pclip=0)
@@ -115,15 +186,4 @@ def live_view(cfg_text: str, cfg: Config, cli_port: str, hide_static: bool) -> N
         show(top_image, np.where(inside, azimuth[range_bin, azimuth_bin], np.nan), pclip=0, gamma=1)
         return artists
 
-    reader.start()
-    try:
-        # Poll often: the timer waits its interval after each update, not from its start.
-        _animation = FuncAnimation(fig, update, interval=POLL_MS, blit=True, cache_frame_data=False)
-        plt.show()
-        if not reader.is_alive():
-            raise RuntimeError("capture stopped; see the error above")
-    finally:
-        stop.set()
-        reader.join(timeout=5)
-        if reader.is_alive():
-            log.warning("capture did not stop; send sensorStop to the radar before the next run")
+    run_live(fig, cfg_text, cli_port, draw, blit=True)

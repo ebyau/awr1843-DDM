@@ -6,6 +6,8 @@ TDM frames hold one chirp per TX in every loop, in TX order; DDM frames hold eve
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 DETECTION_DB = 15.0  # peak picking: above the median of the folded map
@@ -14,11 +16,18 @@ MAX_TARGETS = 10
 AZIMUTH_BINS = 128
 
 
+def spectrum(frames: np.ndarray, window: Callable[[int], np.ndarray] | None = None) -> np.ndarray:
+    """[..., chirp, rx, sample] -> complex [..., Doppler, rx, range]: plain FFTs over fast
+    and slow time, with no window unless one is given (e.g. np.hanning)."""
+    if window is not None:
+        num_chirps, num_samples = frames.shape[-3], frames.shape[-1]
+        frames = frames * window(num_samples) * window(num_chirps)[:, None, None]
+    return np.fft.fft(np.fft.fft(frames, axis=-1), axis=-3)
+
+
 def doppler_spectrum(frames: np.ndarray) -> np.ndarray:
     """[..., chirp, rx, sample] -> complex [..., Doppler, rx, range] (Hann windows)."""
-    num_chirps, num_samples = frames.shape[-3], frames.shape[-1]
-    spectrum = np.fft.fft(frames * np.hanning(num_samples), axis=-1)
-    return np.fft.fft(spectrum * np.hanning(num_chirps)[:, None, None], axis=-3)
+    return spectrum(frames, np.hanning)
 
 
 def tdm_spectrum(frames: np.ndarray, num_tx: int) -> np.ndarray:

@@ -21,8 +21,9 @@ host/ddm/                 Python host tools: the ddm command
   cfg.py                    parse TI .cfg text; range, velocity, DDM and frame parameters
   radar.py                  serial control: send a configuration, start and stop the sensor
   dca.py                    raw ADC capture through a DCA1000EVM (uses xwr)
+  rawdata.py                capture byte order, lossless int16 storage, load_capture
   dsp.py                    FFTs, DDM and TDM decoding of raw frames
-  view.py                   live raw-data view
+  view.py                   live views: raw signal, or decoded maps
   plotting.py               shared plot style and the range-Doppler plot with sub-bands
 test/                     unit tests: C (Makefile, rfparser_test.c, stubs/) and
                           Python (test_*.py; data/ holds the .cfg each profile must render to)
@@ -225,14 +226,39 @@ the ADC samples of every chirp are recorded on the PC.
 ```sh
 uv run ddm capture profiles/template.toml -n 20   # -> captures/YYYYmmdd-HHMMSS_template.npz
 uv run ddm decode captures/*_template.npz --snapshot raw-map.png
-uv run ddm live profiles/template.toml --remove-static
+uv run ddm live profiles/template.toml                     # raw signal and spectrum
+uv run ddm live profiles/template.toml --decoded --remove-static
 ```
 
 | Command | Does | Options |
 |---|---|---|
-| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames as complex samples `[frame, chirp, rx, sample]` together with the configuration text. A `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
-| `ddm live PROFILE` | Live three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--remove-static` (removes every TX copy of stationary objects), `--cli PORT` |
+| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames unchanged as int16 `iq[frame, chirp, rx, sample, 2]` (I, Q) together with the configuration text. A `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
+| `ddm live PROFILE` | Live raw view of one RX, with no processing besides the FFTs: the first chirp's ADC samples (I and Q, in ADC counts) and the range-Doppler spectrum without windows, static removal or detection, as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. With `--decoded`, a processed three-panel view: the raw range-Doppler map (with DDM, one copy per TX), the range-velocity map of the detected cells (15 dB above noise; with DDM after separating the copies, full unambiguous velocity), and a top view from the 3-TX virtual array. Brightness follows the xwr demo (amplitude^0.5, percentile-clipped). Close the window to stop the radar and capture card. | `--rx N` (raw view, default 0), `--decoded`, `--remove-static` (with `--decoded`: removes every TX copy of stationary objects), `--cli PORT` |
 | `ddm decode CAPTURE.npz` | Range and Doppler FFTs (Hann windows), frame-averaged range-Doppler map, and the strongest targets beyond 0.25 m (past the TX-to-RX leakage) with range and velocity. With DDM, targets are found on the folded map and also listed with their TX0 sub-band, the level of every sub-band, and the weakest TX copy relative to the mean of the spare sub-bands. | `--snapshot FILE.png` |
+
+### Raw data for machine learning
+
+A capture is the ADC output as the chip produced it: no window, filter, threshold or scaling
+is applied on the PC. Load it as complex samples and choose the processing in your own code:
+
+```python
+from ddm.rawdata import load_capture
+from ddm.dsp import spectrum
+
+frames, cfg_text = load_capture("captures/wave.npz")  # complex64 [frame, chirp, rx, sample]
+cube = spectrum(frames)                                # complex [frame, Doppler, rx, range], no window
+```
+
+`spectrum(frames, np.hanning)` applies a Hann window on both axes. Keep the complex values:
+the phase across RX and TX carries the angle. Captures made before the int16 format stored
+complex64 `frames`; `load_capture` reads both.
+
+> **TI hardware limit:** the chip filters the signal before the ADC, and this cannot be turned
+> off. Its two IF high-pass filters in series are set to their lowest corners (175 kHz and
+> 350 kHz; `hpf1_corner`/`hpf2_corner` 0). A beat frequency f comes from range f·c / (2·slope),
+> so with a 67 MHz/µs slope the 350 kHz corner sits at about 0.8 m: targets closer than that are
+> attenuated (3 dB at 0.8 m, more further in). A fixed anti-alias
+> low-pass and decimation filter also sit in the digital front end.
 
 DDM or TDM is read from the configuration: without `ddmCfg` the frame is TDM, with chirps
 ordered TX0, TX1, TX2 in every loop. A TDM frame gets a Doppler FFT over the loops for each TX,
@@ -256,7 +282,7 @@ uv run pytest      # host tools (Python)
 
 | Test | What it checks |
 |---|---|
-| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
+| `test_dsp.py` (pytest) | Raw capture decoding: frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, bit-exact int16 capture storage, the unwindowed spectrum, range and velocity resolution, simulated 3-TX DDM targets at positive, negative and band-edge velocities resolved to the right range and signed Doppler bin, static removal, the DDM virtual array, and TDM frames: Doppler per TX, motion compensation of the virtual array, and the live-view maps. |
 | `test_cfg.py` (pytest) | `.cfg` parsing, `ddm_params()` and `range_axis()`. |
 | `test_profile.py` (pytest) | `test/data/aop.toml` (the chirp of TI's `profile_3d_aop.cfg`), with the gesture and TDM settings, gives the commands of its `test/data/*.cfg` fixture in order; `profiles/template.toml` loads and passes the limits; a TI-style `.cfg` (`test/data/ti_style.cfg`) is sent unchanged; derived numbers, `[extra]` lines, rejected typos, and TOML errors versus `.cfg` warnings. |
 | `test_notebook.py` (pytest) | Executes `docs/raw_data.ipynb` on simulated data and checks that its step-by-step decoding matches `ddm.dsp`. |

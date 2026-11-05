@@ -89,13 +89,14 @@ frame boundaries.
 
 Each frame is `[chirp, rx, sample]` complex 16-bit samples, chirps in transmit order
 (chirp *n* uses chirp definition *n* mod N). On the wire the two lanes give the order
-Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_complex` turns into complex samples. `ddm capture`
-saves the frames with the configuration text in a `.npz` file.
+Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_iq` reorders into int16 (I, Q) pairs. `ddm capture`
+saves the frames unchanged with the configuration text in a `.npz` file; `load_capture`
+returns them as complex samples.
 
 ## Host processing
 
-`host/ddm/dsp.py` holds the decoder; `ddm decode` runs it on a capture and `ddm live` on every
-frame. [raw_data.ipynb](raw_data.ipynb) walks through the same steps in plain numpy.
+`host/ddm/dsp.py` holds the decoder; `ddm decode` runs it on a capture and `ddm live --decoded`
+on every frame. [raw_data.ipynb](raw_data.ipynb) walks through the same steps in plain numpy.
 
 | Step | Function | What it does |
 |---|---|---|
