@@ -4,7 +4,7 @@ Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that transmits wit
 Doppler-division multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO, and streams
 the raw ADC samples of every chirp to a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM)
 capture card. The radar does no signal processing: Python tools on the PC capture the data
-unchanged and plot the raw signal, live or from a capture. The firmware is
+unchanged and plot their raw spectrum, live or from a capture. The firmware is
 built from the out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`) and keeps its
 command-line interface, so the chirps are set with the usual `.cfg` commands plus one `ddmCfg`
 command.
@@ -97,8 +97,8 @@ The radar streams its ADC samples to the capture card (see
 
 ```sh
 uv run ddm capture profiles/template.toml -n 50 -o wave.npz   # 50 frames of ADC samples
-uv run ddm show wave.npz                                      # replay its raw signal
-uv run ddm live profiles/template.toml                        # raw signal live; close the window to stop
+uv run ddm show wave.npz                                      # replay its raw spectrum
+uv run ddm live profiles/template.toml                        # raw spectrum live; close the window to stop
 ```
 
 Without `-o`, captures are saved as `captures/YYYYmmdd-HHMMSS_<profile>.npz`.
@@ -111,7 +111,7 @@ All host tools are subcommands of `ddm`; `uv run ddm COMMAND --help` lists the o
 |---|---|
 | `ddm cfg PROFILE [-o FILE]` | Check a profile against the hardware limits, show its derived numbers, write the `.cfg` |
 | `ddm capture PROFILE` | Record raw ADC frames through a DCA1000EVM |
-| `ddm live PROFILE` | Live raw signal of RX 0: ADC samples and the unwindowed range-Doppler spectrum |
+| `ddm live PROFILE` | Live unwindowed range-Doppler spectrum of RX 0 |
 | `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop or saved as a PNG |
 
 Every command takes `-v` for debug output (each command sent to the radar, tracebacks) or `-q`

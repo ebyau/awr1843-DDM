@@ -58,7 +58,7 @@ def cmd_capture(args: argparse.Namespace) -> None:
 
 
 def cmd_show(args: argparse.Namespace) -> None:
-    """Replay a capture's raw signal in a loop, or save its first frame as an image."""
+    """Replay a capture's raw spectrum in a loop, or save its first frame as an image."""
     from .view import replay, snapshot
 
     frames, text = load_capture(args.capture)
@@ -72,7 +72,7 @@ def cmd_show(args: argparse.Namespace) -> None:
 
 
 def cmd_live(args: argparse.Namespace) -> None:
-    """Live raw signal of RX 0: ADC samples and the unwindowed range-Doppler spectrum."""
+    """Live unwindowed range-Doppler spectrum of RX 0."""
     from .view import live_view
 
     text, cfg = load(args.profile)

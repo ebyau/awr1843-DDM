@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Raw-signal plots: live from the capture card, or replayed from a capture file.
 
-RX 0 only, with no processing besides the FFTs: the first chirp's ADC samples (I and Q) and
-the range-Doppler spectrum without windows, as 20 log10 |FFT| on a fixed scale.
+The range-Doppler spectrum of RX 0 with no processing besides the FFTs: no window, as
+20 log10 |FFT| on a fixed scale.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 POLL_MS = 10
 CMAP = "viridis"  # perceptually uniform, dark (weak) to yellow (strong)
-INK, MUTED, Q_COLOUR = "#1f2933", "#6b7785", "#d9822b"
+INK, MUTED = "#1f2933", "#6b7785"
 RAW_RANGE_DB = 80.0  # spectrum colour scale: this far below the first frame's peak
 
 Draw = Callable[[np.ndarray], None]
@@ -50,36 +50,27 @@ def raw_figure(cfg: Config) -> tuple[Figure, Draw]:
     range_step, velocity_step = chirp_axes(cfg, num_chirps)
     half = num_chirps // 2
 
-    fig, (ax_adc, ax_rd) = plt.subplots(1, 2, figsize=(15, 5.5), layout="constrained")
-    samples = np.arange(num_range)
-    i_line, = ax_adc.plot(samples, np.zeros(num_range), color=INK, linewidth=1, label="I")
-    q_line, = ax_adc.plot(samples, np.zeros(num_range), color=Q_COLOUR, linewidth=1, label="Q")
-    ax_adc.legend(loc="lower right", bbox_to_anchor=(1, 1), ncols=2, frameon=False)
-    style(ax_adc, "ADC samples, chirp 0, RX 0", "Sample (fast time)", "ADC counts (int16)")
-    image = ax_rd.imshow(np.zeros((num_range, num_chirps)), cmap=CMAP, aspect="auto", origin="lower",
-                         interpolation="nearest",
-                         extent=(-half - 0.5, num_chirps - half - 0.5,
-                                 -range_step / 2, (num_range - 0.5) * range_step))
-    style(ax_rd, f"Spectrum, RX 0, no window ({velocity_step:.3g} m/s per bin)",
+    fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
+    image = ax.imshow(np.zeros((num_range, num_chirps)), cmap=CMAP, aspect="auto", origin="lower",
+                      interpolation="nearest",
+                      extent=(-half - 0.5, num_chirps - half - 0.5,
+                              -range_step / 2, (num_range - 0.5) * range_step))
+    style(ax, f"Spectrum, RX 0, no window ({velocity_step:.3g} m/s per bin)",
           "Doppler bin (every chirp; DDM: TX k shifted k sub-bands)", "Range (m)")
     for band in range(1, bands):  # sub-band edges, as markers only
-        ax_rd.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
-                      linestyle=(0, (4, 3)))
-    fig.colorbar(image, ax=ax_rd, label="dB re 1 ADC count", shrink=0.8)
-    scale = {"adc": 1.0}  # set by the first frame, then only grows (ADC) or stays fixed (spectrum)
+        ax.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
+                   linestyle=(0, (4, 3)))
+    fig.colorbar(image, ax=ax, label="dB re 1 ADC count", shrink=0.8)
+    scaled = False
 
     def draw(frame: np.ndarray) -> None:
-        chirp = frame[0, 0]
-        i_line.set_ydata(chirp.real)
-        q_line.set_ydata(chirp.imag)
-        scale["adc"] = max(scale["adc"], float(np.abs(chirp.real).max()), float(np.abs(chirp.imag).max()))
-        ax_adc.set_ylim(-1.1 * scale["adc"], 1.1 * scale["adc"])
+        nonlocal scaled
         db = 20 * np.log10(np.abs(np.fft.fftshift(spectrum(frame[:, :1])[:, 0], axes=0)).T + 1e-6)
         image.set_data(db)
-        if "peak" not in scale:
-            scale["peak"] = np.ceil(db.max() / 10) * 10
-            image.set_clim(scale["peak"] - RAW_RANGE_DB, scale["peak"])
-
+        if not scaled:  # the colour scale is fixed by the first frame
+            peak = np.ceil(db.max() / 10) * 10
+            image.set_clim(peak - RAW_RANGE_DB, peak)
+            scaled = True
     return fig, draw
 
 

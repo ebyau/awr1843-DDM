@@ -224,14 +224,14 @@ plots the samples as the radar produced them.
 
 ```sh
 uv run ddm capture profiles/template.toml -n 20   # -> captures/YYYYmmdd-HHMMSS_template.npz
-uv run ddm live profiles/template.toml           # raw signal and spectrum, live
+uv run ddm live profiles/template.toml           # raw spectrum, live
 uv run ddm show captures/*_template.npz           # the same plot for a capture
 ```
 
 | Command | Does | Options |
 |---|---|---|
 | `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames unchanged as int16 `iq[frame, chirp, rx, sample, 2]` (I, Q) together with the configuration text. A `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
-| `ddm live PROFILE` | Live raw view of RX 0, with no processing besides the FFTs: the first chirp's ADC samples (I and Q, in ADC counts) and the range-Doppler spectrum without windows, static removal or detection, as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. Close the window to stop the radar and capture card. | `--cli PORT` |
+| `ddm live PROFILE` | Live range-Doppler spectrum of RX 0, with no processing besides the FFTs (no window, static removal or detection), as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. Close the window to stop the radar and capture card. | `--cli PORT` |
 | `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop at the frame period. Older complex64 captures also load. | `--snapshot FILE.png` (save the first frame instead) |
 
 DDM or TDM is read from the configuration: without `ddmCfg` the frame is TDM, with chirps
