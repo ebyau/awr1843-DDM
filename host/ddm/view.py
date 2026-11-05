@@ -47,7 +47,7 @@ def raw_figure(cfg: Config) -> tuple[Figure, Draw]:
     """The figure and a function that draws one complex frame [chirp, rx, sample] on it."""
     bands, _ = ddm_params(cfg)
     num_chirps, _, num_range = raw_frame_shape(cfg)
-    range_step, velocity_step = chirp_axes(cfg, num_chirps)
+    range_step, _ = chirp_axes(cfg, num_chirps)
     half = num_chirps // 2
 
     fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
@@ -55,12 +55,11 @@ def raw_figure(cfg: Config) -> tuple[Figure, Draw]:
                       interpolation="nearest",
                       extent=(-half - 0.5, num_chirps - half - 0.5,
                               -range_step / 2, (num_range - 0.5) * range_step))
-    style(ax, f"Spectrum, RX 0, no window ({velocity_step:.3g} m/s per bin)",
-          "Doppler bin (every chirp; DDM: TX k shifted k sub-bands)", "Range (m)")
+    style(ax, "Range-Doppler spectrum", "Doppler bin", "Range (m)")
     for band in range(1, bands):  # sub-band edges, as markers only
         ax.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
                    linestyle=(0, (4, 3)))
-    fig.colorbar(image, ax=ax, label="dB re 1 ADC count", shrink=0.8)
+    fig.colorbar(image, ax=ax, label="Magnitude (dB)", shrink=0.8)
     scaled = False
 
     def draw(frame: np.ndarray) -> None:
