@@ -12,7 +12,7 @@ code. Firmware paths are relative to
 |---|---|
 | TDM-MIMO | Time-division multiplexing: one TX antenna per chirp, TX antennas take turns. TI's stock demo. |
 | DDM-MIMO | Doppler-division multiplexing: all TX antennas on every chirp, separated by a per-chirp phase code that shifts each TX in the Doppler spectrum. |
-| Virtual array | The TX × RX antenna pairs used for angle estimation. 3 TX × 4 RX = 12 elements. On the AWR1843AOP the antennas are patches in the chip package (visible through its surface): the 4 RX in one line, the 3 TX in a line at right angles to it. Which is azimuth depends on how the board is mounted. Mounted upright (long side horizontal, "Texas Instruments" text readable, facing the scene), the 4 RX are stacked vertically (elevation) and the 3 TX sit side by side (azimuth): a 3-wide × 4-tall grid. Turning the board 90° swaps the two, so record the mounting with each capture. |
+| Virtual array | The TX × RX antenna pairs used for angle estimation. 3 TX × 4 RX = 12 elements. |
 | MSS | Master subsystem, ARM Cortex-R4F: runs this firmware (command line, RF configuration, LVDS stream). |
 | DSS | DSP subsystem (C674x DSP and FFT accelerator). Unused: the image contains no DSP program. |
 | BSS | Radar subsystem that runs the RF front end. Configured from the MSS through mmWaveLink (`rl*` calls). |

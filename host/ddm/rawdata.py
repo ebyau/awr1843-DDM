@@ -12,6 +12,17 @@ A capture (.npz, format 2) holds:
              approximate, and only roughly spaced for incomplete frames
   meta       JSON: format, mode ("ddm" or "tdm"), frames, incomplete, start_time, host version
              and git commit
+
+Antenna array (AWR1843AOP, the same layout as xwr's rsp): the 12 TX-RX pairs form a grid with
+the TX across (azimuth) and the RX stacked (elevation):
+
+    1-1 2-1 3-1   ^
+    1-2 2-2 3-2   | up
+    1-3 2-3 3-3
+    1-4 2-4 3-4   (TX-RX, 1-based)
+
+The rx axis of iq is RX 1..4; with DDM, TX k's copy sits k sub-bands up in Doppler, and with
+TDM, chirp c of a loop is TX c+1.
 """
 
 from __future__ import annotations
