@@ -20,8 +20,8 @@ the TX across (azimuth) and the RX stacked (elevation):
     1-3 2-3 3-3
     1-4 2-4 3-4   (TX-RX, 1-based)
 
-The rx axis of iq is RX 1..4; with DDM, TX k's copy sits k sub-bands up in Doppler, and with
-TDM, chirp c of a loop is TX c+1.
+In code, TX and RX are 0-based (TX0 is column 1-x): the rx axis of iq is RX0..RX3; with DDM,
+TX k's copy sits k sub-bands up in Doppler; with TDM, chirp c of a loop is TX c.
 """
 
 from __future__ import annotations

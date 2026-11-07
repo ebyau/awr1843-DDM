@@ -121,9 +121,9 @@ Card setup (static IP `192.168.33.30`, `net.core.rmem_max`, switches): xwr's
 
 | Command | Does | Options |
 |---|---|---|
-| `ddm cfg PROFILE` | Check [limits](configuration.md#limits), log derived numbers, print the `.cfg` | `-o FILE` |
-| `ddm capture PROFILE` | Record every frame unchanged | `-n N` (50), `-o FILE.npz`, `--tdm` |
-| `ddm live PROFILE` | Live 20·log10\|FFT\| range-Doppler of RX 0, no window, scale fixed by the first frame | `--tdm` |
+| `ddm cfg PROFILE` | Check [limits](configuration.md#limits), log derived numbers, print the `.cfg` | `-o FILE`, `--tdm` |
+| `ddm capture PROFILE` | Record every frame unchanged | `-n N` (50), `-o FILE.npz`, `--cli PORT`, `--tdm` |
+| `ddm live PROFILE` | Live 20·log10\|FFT\| range-Doppler of RX 0, no window, scale fixed by the first frame | `--cli PORT`, `--tdm` |
 | `ddm show CAPTURE.npz` | Replay at the frame period; lists incomplete frames | `--snapshot FILE.png` |
 
 A `.cfg` file needs `adcCfg 2 1`, `adcbufCfg -1 0 1 1 1`, `lvdsStreamCfg -1 0 1 0`, and

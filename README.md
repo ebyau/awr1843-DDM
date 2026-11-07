@@ -36,9 +36,10 @@ To use its 3 TX × 4 RX = 12-element virtual array, the radar must tell the TX a
   sudo udevadm control --reload-rules
   ```
 
-- The repository holds only the modified SDK files. Fill in the rest:
+- The repository holds only the modified SDK files. Clone it and fill in the rest:
 
   ```sh
+  git clone https://github.com/ebyau/awr1843-DDM.git && cd awr1843-DDM
   cp -r ~/ti/mmwave_sdk_03_06_02_00-LTS/firmware ~/ti/mmwave_sdk_03_06_02_00-LTS/packages sdk/
   git checkout -- sdk
   ```
@@ -56,6 +57,9 @@ Then set SOP2 off and replug. Problems: [flashing](docs/development.md#flashing)
 
 ### 3. Run
 
+Set up the capture card network first (static IP, socket buffer):
+[raw data capture](docs/development.md#raw-data-capture).
+
 ```sh
 uv run ddm cfg profiles/template.toml                         # check limits, print numbers and .cfg
 uv run ddm live profiles/template.toml                        # live raw spectrum
@@ -63,8 +67,7 @@ uv run ddm capture profiles/template.toml -n 50 -o wave.npz   # record 50 frames
 uv run ddm show wave.npz                                      # replay a capture
 ```
 
-Captures default to `captures/YYYYmmdd-HHMMSS_<profile>.npz`. Capture card setup:
-[raw data capture](docs/development.md#raw-data-capture).
+Captures default to `captures/YYYYmmdd-HHMMSS_<profile>.npz`.
 
 ## Host tools
 
@@ -75,7 +78,8 @@ Captures default to `captures/YYYYmmdd-HHMMSS_<profile>.npz`. Capture card setup
 | `ddm live PROFILE` | Live unwindowed range-Doppler spectrum of RX 0 |
 | `ddm show CAPTURE.npz` | Replay a capture, or save a frame as PNG |
 
-Options: `-v` (debug), `-q` (quiet), `--cli PORT`; `uv run ddm COMMAND --help` lists all.
+Options: `-v` (debug), `-q` (quiet); `--cli PORT` for `capture` and `live`; `--tdm` to allow a
+`.cfg` without `ddmCfg`. `uv run ddm COMMAND --help` lists all.
 
 A `PROFILE` is a TOML file (`profiles/template.toml`) or a TI `.cfg` file. Copy the template to
 make your own. DDM is the default; `tdm = true` in `[mimo]` selects TDM. All keys and limits:
