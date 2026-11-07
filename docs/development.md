@@ -297,13 +297,3 @@ uv run ruff check
 
 Settings are in `pyproject.toml`: line length 110, rule sets `E`, `F`, `W`, `I`, `B`, `UP`,
 `SIM`.
-
-## Comparing with TI's SDK
-
-The first commit contains TI's unmodified sources for the tracked SDK directories. To see
-every firmware change:
-
-```sh
-git diff $(git rev-list --max-parents=0 HEAD) -- sdk
-git diff --stat $(git rev-list --max-parents=0 HEAD) -- sdk    # list of changed files
-```
