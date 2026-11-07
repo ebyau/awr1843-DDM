@@ -38,6 +38,7 @@ def test_raw_frame_shape_from_profile() -> None:
     ("adcCfg 2 1", "adcCfg 2 0", "complex"),                       # real ADC samples
     ("adcbufCfg -1 0 1 1 1", "adcbufCfg -1 0 0 1 1", "adcbufCfg"),  # I before Q
     ("adcbufCfg -1 0 1 1 1", "adcbufCfg -1 0 1 0 1", "adcbufCfg"),  # RX interleaved
+    (" 1 256 7200", " 1 255 7200", "even"),                       # odd sample count
 ])
 def test_raw_frame_shape_rejects_unsupported_streams(line: str, replacement: str, message: str) -> None:
     cfg = parse_cfg(RAW_CFG.read_text().replace(line, replacement))

@@ -126,5 +126,9 @@ def raw_frame_shape(cfg: Config) -> tuple[int, int, int]:
     if cfg_args(cfg, "adcbufCfg")[1:4] != ["0", "1", "1"]:
         raise ValueError("raw capture needs adcbufCfg -1 0 1 1 1 (complex, Q first, RX not interleaved); "
                          "other layouts would decode with I/Q swapped or RX scrambled")
+    samples = int(profile(cfg)["samples"])
+    if samples % 2:
+        raise ValueError(f"raw capture needs an even ADC sample count (2 LVDS lanes carry sample pairs); "
+                         f"got {samples}")
     num_rx = int(cfg_args(cfg, "channelCfg")[0]).bit_count()
-    return chirps_per_frame(cfg), num_rx, int(profile(cfg)["samples"])
+    return chirps_per_frame(cfg), num_rx, samples
