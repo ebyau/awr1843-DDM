@@ -46,9 +46,15 @@ def test_every_fixture_is_tested() -> None:
 def test_load_checks_profile_and_sends_ti_cfg_unchanged(caplog: pytest.LogCaptureFixture) -> None:
     assert load(PROFILE)[0].splitlines()[-1] == "sensorStart"
     with caplog.at_level(logging.WARNING):
-        text, _ = load(TI_PROFILE)
+        text, _ = load(TI_PROFILE, allow_tdm=True)
     assert text == TI_PROFILE.read_text()
     assert not caplog.records
+
+
+def test_cfg_without_ddmcfg_needs_tdm_flag() -> None:
+    """A .cfg without ddmCfg would silently run TDM; it needs --tdm (allow_tdm)."""
+    with pytest.raises(ValueError, match="no ddmCfg"):
+        load(TI_PROFILE)
 
 
 def test_derived_numbers_of_ti_chirp() -> None:

@@ -60,6 +60,8 @@ def check(cfg: Config) -> list[str]:
     if channel_bytes * num_rx > ADC_BUFFER_BYTES:
         problems.append(f"{p['samples']:g} complex samples x {num_rx} RX ({channel_bytes} B per RX) exceed "
                         f"the {ADC_BUFFER_BYTES // 1024} KB ADC buffer per chirp")
+    if p["samples"] % 2:  # two LVDS lanes carry alternate samples
+        problems.append(f"{p['samples']:g} ADC samples; must be even (2 LVDS lanes carry sample pairs)")
     for name, max_us in PROFILE_MAX_US.items():
         if p[name] > max_us:
             problems.append(f"profileCfg {name} = {p[name]:g} us; at most {max_us:g} us")

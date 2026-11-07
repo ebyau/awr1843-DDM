@@ -230,12 +230,26 @@ uv run ddm show captures/*_template.npz           # the same plot for a capture
 
 | Command | Does | Options |
 |---|---|---|
-| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves complete frames unchanged as int16 `iq[frame, chirp, rx, sample, 2]` (I, Q) together with the configuration text. A `.cfg` file needs complex ADC output and `lvdsStreamCfg -1 0 1 0`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT` |
-| `ddm live PROFILE` | Live range-Doppler spectrum of RX 0, with no processing besides the FFTs (no window, static removal or detection), as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. Close the window to stop the radar and capture card. | `--cli PORT` |
-| `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop at the frame period. Older complex64 captures also load. | `--snapshot FILE.png` (save the first frame instead) |
+| `ddm capture PROFILE` | Starts the capture card, sends the configuration, and saves every frame unchanged (format below). A `.cfg` file needs complex ADC output, `adcbufCfg -1 0 1 1 1` and `lvdsStreamCfg -1 0 1 0`, and `--tdm` if it has no `ddmCfg`. | `-n N` (default 50), `-o FILE.npz` (default `captures/YYYYmmdd-HHMMSS_<profile>.npz`), `--cli PORT`, `--tdm` |
+| `ddm live PROFILE` | Live range-Doppler spectrum of RX 0, with no processing besides the FFTs (no window, static removal or detection), as 20·log10\|FFT\| in dB re 1 ADC count on a scale fixed by the first frame. Zero Doppler is centred; with DDM, TX *k*'s copy sits *k* sub-bands up. Close the window to stop the radar and capture card. | `--cli PORT`, `--tdm` |
+| `ddm show CAPTURE.npz` | The same plot for a saved capture, replayed in a loop at the frame period. Lists incomplete frames. Older captures also load. | `--snapshot FILE.png` (save the first frame instead) |
 
 DDM or TDM is read from the configuration: without `ddmCfg` the frame is TDM, with chirps
-ordered TX0, TX1, TX2 in every loop.
+ordered TX0, TX1, TX2 in every loop. The mode is printed and shown in the plot title.
+
+A capture (`.npz`, format 2, read with `ddm.rawdata.load_capture`) holds:
+
+| Key | Contents |
+|---|---|
+| `iq` | int16 `[frame, chirp, rx, sample, 2]` (I, Q), unprocessed |
+| `config` | the `.cfg` text the radar ran |
+| `complete` | bool per frame; `False` where the capture card lost data: the contents are unreliable (partly zero-filled). No frame is left out after the first one received, so frame *k* started *k* frame periods after frame 0 |
+| `timestamp` | float per frame: PC clock (Unix s) when the host read the frame's first data. Approximate (network and OS delays); use frame index × frame period for timing, and the timestamp to spot stalls |
+| `meta` | JSON: `format`, `mode` (`ddm`/`tdm`), `frames`, `incomplete`, `start_time`, `host` version, git `commit` |
+
+Format 1 captures (`iq` and `config` only) and older complex64 `frames` captures load as complete
+frames with unknown times. They left out incomplete frames, so their frames are not guaranteed
+to be evenly spaced in time.
 
 Capture card setup (static IP `192.168.33.30` on the Ethernet port, a larger
 `net.core.rmem_max`, switch settings) is described in xwr's

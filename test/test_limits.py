@@ -33,6 +33,7 @@ def test_fixtures_pass(path: Path) -> None:
     (RAW, "frameCfg 0 3 32", "frameCfg 0 3 256", "1 to 255"),
     (RAW, "frameCfg 0 3 32", "frameCfg 0 3 0", "1 to 255"),
     (RAW, "1 256 7200", "1 1025 7200", "ADC buffer"),
+    (RAW, "1 256 7200", "1 255 7200", "must be even"),
     (RAW.replace("channelCfg 15", "channelCfg 7"), "1 256 7200", "1 1365 7200", "ADC buffer"),  # 16 B pad
     (RAW, "chirpCfg 3 3 0 0 0 0 0 7\n", "chirpCfg 3 3 0 0 0 0 0 3\n", "same TX mask"),
     (RAW, "profileCfg 0 77 7 3 39 0 0 100", "profileCfg 0 77 7 3 39 0 0 -100", "outside 76-81 GHz"),

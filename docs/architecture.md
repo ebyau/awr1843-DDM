@@ -90,8 +90,9 @@ frame boundaries.
 Each frame is `[chirp, rx, sample]` complex 16-bit samples, chirps in transmit order
 (chirp *n* uses chirp definition *n* mod N). On the wire the two lanes give the order
 Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_iq` reorders into int16 (I, Q) pairs. `ddm capture`
-saves the frames unchanged with the configuration text in a `.npz` file; `load_capture`
-returns them as complex samples.
+saves every frame unchanged in a `.npz` file, with the configuration text, the MIMO mode, and
+which frames lost data on the way (zero-filled, never left out); `load_capture` returns them
+with this metadata ([format](development.md#raw-data-capture)).
 
 ## Changed files
 

@@ -2,15 +2,33 @@
 """Raw ADC samples exactly as the radar produced them: the capture card's byte order,
 lossless int16 storage, loading of captures, and their plain (unwindowed) spectrum.
 
-A capture holds `iq` int16 [frame, chirp, rx, sample, 2] (I, Q) with no window, filter or
-scaling applied, and `config`, the .cfg text the radar ran.
+A capture (.npz, format 2) holds:
+  iq         int16 [frame, chirp, rx, sample, 2] (I, Q), no window, filter or scaling applied
+  config     the .cfg text the radar ran
+  complete   bool [frame]; False where the capture card lost data: the frame's contents are
+             unreliable (partly zero-filled). No frame is left out after the first one received,
+             so frame k started k frame periods after frame 0 (format 2 only).
+  timestamp  float64 [frame]; PC clock (Unix s) when the host read the frame's first data;
+             approximate, and only roughly spaced for incomplete frames
+  meta       JSON: format, mode ("ddm" or "tdm"), frames, incomplete, start_time, host version
+             and git commit
 """
 
 from __future__ import annotations
 
+import json
+import math
+import subprocess
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 
 import numpy as np
+
+from .cfg import mode, parse_cfg
+
+FORMAT = 2
 
 
 def iiqq_to_iq(data: bytes | bytearray, shape: tuple[int, int, int]) -> np.ndarray:
@@ -29,20 +47,77 @@ def iq_to_complex(iq: np.ndarray) -> np.ndarray:
     return iq[..., 0].astype(np.float32) + 1j * iq[..., 1].astype(np.float32)
 
 
-def save_capture(path: Path, iq: np.ndarray, cfg_text: str) -> None:
-    """Writes int16 frames [frame, chirp, rx, sample, 2] and the .cfg text to a compressed .npz."""
+@dataclass(frozen=True)
+class Capture:
+    """A loaded capture; see the module docstring for the fields."""
+
+    iq: np.ndarray
+    config: str
+    complete: np.ndarray
+    timestamp: np.ndarray
+    meta: dict = field(default_factory=dict)
+
+    @property
+    def frames(self) -> np.ndarray:
+        """complex64 [frame, chirp, rx, sample]."""
+        return iq_to_complex(self.iq)
+
+
+def save_capture(path: Path, iq: np.ndarray, cfg_text: str, complete: np.ndarray | None = None,
+                 timestamp: np.ndarray | None = None) -> None:
+    """Writes int16 frames [frame, chirp, rx, sample, 2], the .cfg text and per-frame metadata
+    to a compressed .npz. Missing complete/timestamp mean all complete, times unknown (NaN)."""
+    count = len(iq)
+    complete = np.ones(count, bool) if complete is None else np.asarray(complete, bool)
+    timestamp = np.full(count, np.nan) if timestamp is None else np.asarray(timestamp, np.float64)
+    if complete.shape != (count,) or timestamp.shape != (count,):
+        raise ValueError(f"complete and timestamp need one entry per frame ({count})")
+    start = timestamp[0] if count and math.isfinite(timestamp[0]) else None
+    meta = {
+        "format": FORMAT,
+        "mode": mode(parse_cfg(cfg_text)),
+        "frames": count,
+        "incomplete": int(count - complete.sum()),
+        "start_time": datetime.fromtimestamp(start, UTC).isoformat() if start is not None else None,
+        "host": host_version(),
+        "commit": git_commit(),
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, iq=iq, config=cfg_text)
+    np.savez_compressed(path, iq=iq, config=cfg_text, complete=complete, timestamp=timestamp,
+                        meta=json.dumps(meta))
 
 
-def load_capture(path: Path) -> tuple[np.ndarray, str]:
-    """(complex64 frames [frame, chirp, rx, sample], .cfg text) of a capture.
+def host_version() -> str | None:
+    try:
+        return metadata.version("awr1843-ddm-host")
+    except metadata.PackageNotFoundError:
+        return None
 
-    Also reads older captures, which stored complex64 `frames`.
-    """
+
+def git_commit() -> str | None:
+    """The short git commit of the host code, with "-dirty" for uncommitted changes; None outside git."""
+    try:
+        return subprocess.run(["git", "describe", "--always", "--dirty"], cwd=Path(__file__).parent,
+                              capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def load_capture(path: Path) -> Capture:
+    """A capture of any format. Format 1 (int16 iq, no metadata) and older complex64
+    `frames` captures load with every frame marked complete and unknown times; they left
+    out incomplete frames, so their frames are not evenly spaced in time."""
     with np.load(path) as data:
-        frames = iq_to_complex(data["iq"]) if "iq" in data else data["frames"]
-        return frames, str(data["config"])
+        if "iq" in data:
+            iq = data["iq"]
+        else:  # complex64 frames holding int16 values: exact
+            iq = np.stack([data["frames"].real, data["frames"].imag], axis=-1).astype(np.int16)
+        config = str(data["config"])
+        if "meta" in data:
+            return Capture(iq, config, data["complete"], data["timestamp"], json.loads(str(data["meta"])))
+    count = len(iq)
+    meta = {"format": 1, "mode": mode(parse_cfg(config)), "frames": count, "incomplete": None}
+    return Capture(iq, config, np.ones(count, bool), np.full(count, np.nan), meta)
 
 
 def spectrum(frames: np.ndarray) -> np.ndarray:

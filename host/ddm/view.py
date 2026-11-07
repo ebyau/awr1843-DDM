@@ -20,8 +20,8 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from .cfg import Config, cfg_args, chirp_axes, ddm_params, raw_frame_shape
-from .dca import capture, open_capture_card
+from .cfg import Config, cfg_args, chirp_axes, ddm_params, describe_mode, raw_frame_shape
+from .dca import Frame, capture, open_capture_card
 from .rawdata import iq_to_complex, spectrum
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def raw_figure(cfg: Config) -> tuple[Figure, Draw]:
                       interpolation="nearest",
                       extent=(-half - 0.5, num_chirps - half - 0.5,
                               -range_step / 2, (num_range - 0.5) * range_step))
-    style(ax, "Range-Doppler spectrum", "Doppler bin", "Range (m)")
+    style(ax, f"Range-Doppler spectrum · {describe_mode(cfg)}", "Doppler bin", "Range (m)")
     for band in range(1, bands):  # sub-band edges, as markers only
         ax.axvline(band * num_chirps / bands - half - 0.5, color="white", alpha=0.5, linewidth=1,
                    linestyle=(0, (4, 3)))
@@ -73,7 +73,7 @@ def raw_figure(cfg: Config) -> tuple[Figure, Draw]:
     return fig, draw
 
 
-def read_raw_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray],
+def read_raw_frames(stream: Iterator[Frame], latest: queue.Queue[Frame],
                     stop: threading.Event) -> None:
     """Keep only the newest frame so slow plotting never backs up the capture."""
     try:
@@ -90,14 +90,14 @@ def read_raw_frames(stream: Iterator[np.ndarray], latest: queue.Queue[np.ndarray
 def live_view(cfg_text: str, cfg: Config, cli_port: str) -> None:
     """Streams frames from the capture card and plots the newest until the window closes."""
     fig, draw = raw_figure(cfg)
-    latest: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
+    latest: queue.Queue[Frame] = queue.Queue(maxsize=1)
     stop = threading.Event()
     stream = capture(cfg_text, cli_port, open_capture_card())
     reader = threading.Thread(target=read_raw_frames, args=(stream, latest, stop), daemon=True)
 
     def update(_: int) -> list:
         try:
-            draw(iq_to_complex(latest.get_nowait()))
+            draw(iq_to_complex(latest.get_nowait().iq))
         except queue.Empty:
             if not reader.is_alive():
                 plt.close(fig)

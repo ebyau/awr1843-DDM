@@ -33,7 +33,7 @@ ddmCfg <numBands>
 
 | `numBands` | Effect |
 |---|---|
-| `0` (or no `ddmCfg` line) | TDM-MIMO, or a single TX: no phase coding. |
+| `0` (or no `ddmCfg` line) | TDM-MIMO, or a single TX: no phase coding. The host tools refuse a `.cfg` with no `ddmCfg` line unless `--tdm` is given; an explicit `ddmCfg 0` counts as choosing TDM. |
 | `4` | DDM-MIMO with 4 Doppler sub-bands: 3 TX copies and one empty sub-band. Tested on hardware. |
 | `8`, `16` | More sub-bands than TX + 1. Accepted, but untested on hardware. |
 
@@ -64,8 +64,11 @@ Behaviour:
 | `chirpCfg` | `numBands` chirp definitions. Every chirp enables the same TX set, contiguous from TX0 (TX mask `7` for 3 TX) | Phase codes are assigned by TX index; TX *k* goes to sub-band *k* |
 | `frameCfg` | Exactly `numBands` chirps per loop (`chirpEndIdx − chirpStartIdx + 1 = numBands`) | The phase pattern repeats every `numBands` chirps |
 
-To run the same scene in TDM for comparison, set `tdm = true` in a copy of the profile: one
-chirp definition per TX (masks 1, 2, 4), `frameCfg 0 2 ...` and no `ddmCfg`.
+**TDM is a diagnostic mode.** DDM is the data mode; TDM is for hardware checks, per-channel
+phase calibration, antenna-layout tests and single-TX micro-Doppler. Choose it explicitly: set
+`tdm = true` in a copy of the profile (one chirp definition per TX, masks 1, 2, 4,
+`frameCfg 0 2 ...` and no `ddmCfg`), or pass `--tdm` with a `.cfg` file. Every capture records
+its mode, and `ddm cfg`, `live` and `show` print it.
 
 ## Profiles
 

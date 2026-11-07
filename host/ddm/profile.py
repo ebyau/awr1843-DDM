@@ -121,10 +121,14 @@ def apply_extra(lines: list[str], extra: list[str]) -> list[str]:
     return result + [line for group in by_command.values() for line in group]
 
 
-def load(path: Path) -> tuple[str, Config]:
+def load(path: Path, allow_tdm: bool = False) -> tuple[str, Config]:
     """The .cfg text and parsed commands of a profile: a .toml profile, rendered
     (hardware-limit violations are errors), or a TI .cfg file, sent as it is
-    (violations are logged as warnings)."""
+    (violations are logged as warnings).
+
+    A .cfg file without ddmCfg would run TDM; it is refused unless allow_tdm, so TDM data
+    never ends up in a DDM dataset by accident. A .toml profile chooses with [mimo] tdm.
+    """
     if path.suffix == ".toml":
         text = render(read(path), path.name)
         cfg = parse_cfg(text)
@@ -139,6 +143,9 @@ def load(path: Path) -> tuple[str, Config]:
             problems = [f"limits not checked ({err})"]
         for problem in problems:
             log.warning("%s: %s", path, problem)
+        if "ddmCfg" not in cfg and not allow_tdm:
+            raise ValueError(f"{path} has no ddmCfg, so the radar would run TDM (one TX per chirp). "
+                             "Add 'ddmCfg 4' for DDM, or pass --tdm if TDM is intended")
     return text, cfg
 
 

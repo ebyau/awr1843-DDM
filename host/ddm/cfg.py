@@ -85,6 +85,17 @@ def is_tdm(cfg: Config) -> bool:
     return ddm_params(cfg)[0] == 0
 
 
+def mode(cfg: Config) -> str:
+    """The MIMO mode tag: ddm, or tdm without ddmCfg (the TX take turns, one per chirp)."""
+    return "tdm" if is_tdm(cfg) else "ddm"
+
+
+def describe_mode(cfg: Config) -> str:
+    """The MIMO mode in words, e.g. "DDM, 4 sub-bands" or "TDM"."""
+    bands, _ = ddm_params(cfg)
+    return "TDM" if is_tdm(cfg) else f"DDM, {bands} sub-bands"
+
+
 def doppler_bins(cfg: Config) -> int:
     """Doppler FFT size (no zero padding): every chirp with DDM, one chirp per loop with TDM."""
     if is_tdm(cfg):
@@ -111,5 +122,9 @@ def raw_frame_shape(cfg: Config) -> tuple[int, int, int]:
         raise ValueError("raw capture needs complex ADC output (adcCfg 2 1)")
     if cfg_args(cfg, "lvdsStreamCfg")[1:4] != ["0", "1", "0"]:
         raise ValueError("raw capture needs headerless ADC data on LVDS (lvdsStreamCfg -1 0 1 0)")
+    # The decode (rawdata.iiqq_to_iq) assumes complex output, Q before I and RX not interleaved
+    if cfg_args(cfg, "adcbufCfg")[1:4] != ["0", "1", "1"]:
+        raise ValueError("raw capture needs adcbufCfg -1 0 1 1 1 (complex, Q first, RX not interleaved); "
+                         "other layouts would decode with I/Q swapped or RX scrambled")
     num_rx = int(cfg_args(cfg, "channelCfg")[0]).bit_count()
     return chirps_per_frame(cfg), num_rx, int(profile(cfg)["samples"])

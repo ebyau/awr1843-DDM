@@ -36,6 +36,8 @@ def test_raw_frame_shape_from_profile() -> None:
     ("lvdsStreamCfg -1 0 1 0", "lvdsStreamCfg -1 0 0 0", "LVDS"),  # processed output
     ("lvdsStreamCfg -1 0 1 0", "lvdsStreamCfg -1 1 1 0", "LVDS"),  # header in the stream
     ("adcCfg 2 1", "adcCfg 2 0", "complex"),                       # real ADC samples
+    ("adcbufCfg -1 0 1 1 1", "adcbufCfg -1 0 0 1 1", "adcbufCfg"),  # I before Q
+    ("adcbufCfg -1 0 1 1 1", "adcbufCfg -1 0 1 0 1", "adcbufCfg"),  # RX interleaved
 ])
 def test_raw_frame_shape_rejects_unsupported_streams(line: str, replacement: str, message: str) -> None:
     cfg = parse_cfg(RAW_CFG.read_text().replace(line, replacement))
@@ -62,15 +64,36 @@ def test_iiqq_round_trip() -> None:
 
 
 def test_capture_round_trip_is_bit_exact(tmp_path: Path) -> None:
-    """Captures keep the int16 samples unchanged; older complex64 captures still load."""
+    """Captures keep the int16 samples and per-frame metadata unchanged."""
+    cfg_text = RAW_CFG.read_text()
     rng = np.random.default_rng(1)
-    iq = rng.integers(-32768, 32768, (2, 4, 4, 8, 2), dtype=np.int16)
-    save_capture(tmp_path / "new.npz", iq, "cfg text")
-    frames, text = load_capture(tmp_path / "new.npz")
-    assert text == "cfg text"
-    assert np.array_equal(frames.real, iq[..., 0]) and np.array_equal(frames.imag, iq[..., 1])
-    np.savez_compressed(tmp_path / "old.npz", frames=frames, config="cfg text")
-    assert np.array_equal(load_capture(tmp_path / "old.npz")[0], frames)
+    iq = rng.integers(-32768, 32768, (3, 4, 4, 8, 2), dtype=np.int16)
+    save_capture(tmp_path / "c.npz", iq, cfg_text, [True, False, True], [100.0, 100.1, 100.2])
+    cap = load_capture(tmp_path / "c.npz")
+    assert cap.config == cfg_text and cap.iq.dtype == np.int16 and np.array_equal(cap.iq, iq)
+    assert np.array_equal(cap.frames.real, iq[..., 0]) and np.array_equal(cap.frames.imag, iq[..., 1])
+    assert cap.complete.tolist() == [True, False, True]
+    assert cap.timestamp.tolist() == [100.0, 100.1, 100.2]
+    assert cap.meta["format"] == 2 and cap.meta["mode"] == "ddm"
+    assert cap.meta["frames"] == 3 and cap.meta["incomplete"] == 1
+
+
+def test_older_captures_load(tmp_path: Path) -> None:
+    """Format 1 (int16 iq) and complex64 frames load as complete frames of unknown time."""
+    cfg_text = RAW_CFG.read_text()
+    iq = np.random.default_rng(4).integers(-32768, 32768, (2, 4, 4, 8, 2), dtype=np.int16)
+    np.savez_compressed(tmp_path / "v1.npz", iq=iq, config=cfg_text)
+    np.savez_compressed(tmp_path / "v0.npz", frames=iq_to_complex(iq), config=cfg_text)
+    for name in ("v1.npz", "v0.npz"):
+        cap = load_capture(tmp_path / name)
+        assert np.array_equal(cap.iq, iq) and cap.complete.all() and np.isnan(cap.timestamp).all()
+        assert cap.meta["format"] == 1 and cap.meta["mode"] == "ddm"
+
+
+def test_capture_records_tdm_mode(tmp_path: Path) -> None:
+    tdm_text = (Path(__file__).parent / "data" / "tdm.cfg").read_text()
+    save_capture(tmp_path / "t.npz", np.zeros((1, 2, 1, 2, 2), np.int16), tdm_text)
+    assert load_capture(tmp_path / "t.npz").meta["mode"] == "tdm"
 
 
 def test_spectrum_is_unwindowed() -> None:
@@ -110,6 +133,6 @@ def test_snapshot_plots_a_capture(tmp_path: Path) -> None:
     shape = (1, *raw_frame_shape(parse_cfg(cfg_text)), 2)
     iq = np.random.default_rng(3).integers(-500, 500, shape, dtype=np.int16)
     save_capture(tmp_path / "c.npz", iq, cfg_text)
-    frames, text = load_capture(tmp_path / "c.npz")
-    snapshot(frames[0], parse_cfg(text), tmp_path / "c.png")
+    cap = load_capture(tmp_path / "c.npz")
+    snapshot(cap.frames[0], parse_cfg(cap.config), tmp_path / "c.png")
     assert (tmp_path / "c.png").stat().st_size > 0
