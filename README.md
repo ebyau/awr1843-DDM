@@ -1,28 +1,20 @@
 # DDM-MIMO raw-data firmware for the AWR1843AOP
 
-Firmware for the Texas Instruments AWR1843AOPEVM 77 GHz radar that transmits with
-Doppler-division multiplexing (DDM) MIMO instead of TI's time-division (TDM) MIMO, and streams
-the raw ADC samples of every chirp to a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM)
-capture card. The radar does no signal processing: Python tools on the PC capture the data
-unchanged and plot their raw spectrum, live or from a capture. The firmware is
-built from the out-of-box demo in TI mmWave SDK 03.06.02 (`xwr18xx_mmw`) and keeps its
-command-line interface, so the chirps are set with the usual `.cfg` commands plus one `ddmCfg`
-command.
+Firmware for the TI AWR1843AOPEVM (77 GHz) that transmits with Doppler-division multiplexing
+(DDM) MIMO and streams raw ADC samples to a [DCA1000EVM](https://www.ti.com/tool/DCA1000EVM).
+The radar does no processing; Python tools on the PC capture the data and plot its raw spectrum.
+Built on TI's `xwr18xx_mmw` demo (mmWave SDK 03.06.02): same `.cfg` commands, plus `ddmCfg`.
 
 ## What DDM changes
 
-A MIMO radar forms a *virtual array* of TX × RX antenna pairs (here 3 × 4 = 12) to estimate
-angle of arrival (AoA). To do that it must tell the transmitters apart.
+To use its 3 TX × 4 RX = 12-element virtual array, the radar must tell the TX apart.
 
-- **TDM** (stock TI demo): one TX per chirp, cycling TX0 → TX1 → TX2. Each TX is sampled only
-  every third chirp, which limits the unambiguous velocity to about ±6.9 m/s with the stock
-  AOP chirp profile.
-- **DDM** (this firmware): all three TX transmit on every chirp. TX *k* adds a phase step to
-  each chirp, which shifts its copy of every target by *k* Doppler sub-bands. The 128-point
-  Doppler FFT is split into 4 sub-bands of 32 bins; three hold the TX copies and one stays empty.
-  The empty sub-band shows processing on the PC which copy came from which TX, which recovers the
-  12-element virtual array and resolves velocity over the full chirp rate: about ±20.6 m/s
-  with 0.32 m/s resolution on the same chirp profile.
+- **TDM** (TI's demo): TX take turns, one per chirp. Velocity range: ±6.9 m/s.
+- **DDM** (this firmware): all TX on every chirp; TX *k* gets a phase step that shifts its copy
+  *k* Doppler sub-bands up. 4 sub-bands: 3 TX copies, 1 empty, which marks TX0. Velocity
+  range: ±20.6 m/s.
+
+(Velocities for TI's stock AOP chirp.)
 
 ## Quick start
 
