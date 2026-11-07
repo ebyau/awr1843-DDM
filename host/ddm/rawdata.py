@@ -10,8 +10,7 @@ A capture (.npz, format 2) holds:
              so frame k started k frame periods after frame 0 (format 2 only).
   timestamp  float64 [frame]; PC clock (Unix s) when the host read the frame's first data;
              approximate, and only roughly spaced for incomplete frames
-  meta       JSON: format, mode ("ddm" or "tdm"), frames, incomplete, start_time, host version
-             and git commit
+  meta       JSON: format, mode ("ddm" or "tdm"), frames, incomplete, start_time
 
 Antenna array (AWR1843AOP, the same layout as xwr's rsp): the 12 TX-RX pairs form a grid with
 the TX across (azimuth) and the RX stacked (elevation):
@@ -29,10 +28,8 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from importlib import metadata
 from pathlib import Path
 
 import numpy as np
@@ -90,28 +87,10 @@ def save_capture(path: Path, iq: np.ndarray, cfg_text: str, complete: np.ndarray
         "frames": count,
         "incomplete": int(count - complete.sum()),
         "start_time": datetime.fromtimestamp(start, UTC).isoformat() if start is not None else None,
-        "host": host_version(),
-        "commit": git_commit(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, iq=iq, config=cfg_text, complete=complete, timestamp=timestamp,
                         meta=json.dumps(meta))
-
-
-def host_version() -> str | None:
-    try:
-        return metadata.version("awr1843-ddm-host")
-    except metadata.PackageNotFoundError:
-        return None
-
-
-def git_commit() -> str | None:
-    """The short git commit of the host code, with "-dirty" for uncommitted changes; None outside git."""
-    try:
-        return subprocess.run(["git", "describe", "--always", "--dirty"], cwd=Path(__file__).parent,
-                              capture_output=True, text=True, check=True, timeout=5).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
 
 
 def load_capture(path: Path) -> Capture:

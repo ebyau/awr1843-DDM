@@ -245,7 +245,7 @@ A capture (`.npz`, format 2, read with `ddm.rawdata.load_capture`) holds:
 | `config` | the `.cfg` text the radar ran |
 | `complete` | bool per frame; `False` where the capture card lost data: the contents are unreliable (partly zero-filled). No frame is left out after the first one received, so frame *k* started *k* frame periods after frame 0 |
 | `timestamp` | float per frame: PC clock (Unix s) when the host read the frame's first data. Approximate (network and OS delays); use frame index × frame period for timing, and the timestamp to spot stalls |
-| `meta` | JSON: `format`, `mode` (`ddm`/`tdm`), `frames`, `incomplete`, `start_time`, `host` version, git `commit` |
+| `meta` | JSON: `format`, `mode` (`ddm`/`tdm`), `frames`, `incomplete`, `start_time` |
 
 Format 1 captures (`iq` and `config` only) and older complex64 `frames` captures load as complete
 frames with unknown times. They left out incomplete frames, so their frames are not guaranteed
