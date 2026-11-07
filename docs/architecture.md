@@ -96,25 +96,3 @@ Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_iq` reorders into int16 (I, Q) pairs
 saves every frame unchanged in a `.npz` file, with the configuration text, the MIMO mode, and
 which frames lost data on the way (zero-filled, never left out); `load_capture` returns them
 with this metadata ([format](development.md#raw-data-capture)).
-
-## Changed files
-
-Paths are under `sdk/packages/ti/`. Apart from these, the only modified SDK file is
-`sdk/packages/scripts/unix/setenv.sh` (build environment, see
-[development.md](development.md#environment)).
-
-| File | Change |
-|---|---|
-| `demo/xwr18xx/mmw/mss/mss_main.c` | MSS-only firmware: sensor open/config/start/stop, DDM phase shifters, ADC buffer and LVDS setup |
-| `demo/xwr18xx/mmw/mss/mmw_cli.c` | Sensor and stream commands only, plus `ddmCfg` |
-| `demo/xwr18xx/mmw/mss/mmw_mss.h`, `include/mmw_config.h` | Control block and configuration types without the processing chain |
-| `demo/xwr18xx/mmw/mss/mmw_lvds_stream.{c,h}` | LVDS hardware session only (raw ADC data) |
-| `demo/xwr18xx/mmw/mmw_res.h` | LVDS EDMA resources only |
-| `demo/xwr18xx/mmw/makefile`, `mss/mmw_mss.mak`, `mss/mmw_mss_linker.cmd` | Builds the MSS image; the image has no DSP program |
-| `demo/utils/mmwdemo_rfparser.{c,h}` | `ddmNumBands` input, `ddmNumTx` output and the DDM chirp checks; a frame with more than 32 chirps per loop now stops parsing with the error instead of continuing past it |
-
-The demo's DSS sources, its documentation, the processing chain under `datapath/`, and the
-example profiles are removed.
-
-To see every line changed against TI's sources, see
-[development.md](development.md#comparing-with-tis-sdk).

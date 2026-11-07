@@ -308,8 +308,6 @@ git diff $(git rev-list --max-parents=0 HEAD) -- sdk
 git diff --stat $(git rev-list --max-parents=0 HEAD) -- sdk    # list of changed files
 ```
 
-The changed files are listed in [architecture.md](architecture.md#changed-files).
-
 ## Coding conventions
 
 Firmware (C):
