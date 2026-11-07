@@ -57,6 +57,13 @@ def test_cfg_without_ddmcfg_needs_tdm_flag() -> None:
         load(TI_PROFILE)
 
 
+def test_ddmcfg_before_sensorstop_is_refused(tmp_path: Path) -> None:
+    """sensorStop clears ddmCfg in the firmware, so a ddmCfg before it would be lost."""
+    text = (DATA / "raw.cfg").read_text().replace("ddmCfg 4\n", "")
+    with pytest.raises(ValueError, match="before sensorStop"):
+        load(write(tmp_path, "early.cfg", "ddmCfg 4\n" + text))
+
+
 def test_derived_numbers_of_ti_chirp() -> None:
     numbers = derived(load(FIXTURE)[1])
     assert numbers["chirp period (us)"] == 46

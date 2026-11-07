@@ -1,0 +1,14 @@
+# Lint and test the host tools on every push and pull request. The firmware and its C test
+# need TI's SDK and toolchain, so they are built and run by hand (docs/development.md).
+name: CI
+on: [push, pull_request]
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run ruff check host test
+      - run: uv run pytest -q

@@ -55,3 +55,4 @@ __pycache__/
 # Raw captures written by ddm capture
 /captures/
 *.npz
+!/test/data/*.npz

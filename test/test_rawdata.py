@@ -136,3 +136,19 @@ def test_snapshot_plots_a_capture(tmp_path: Path) -> None:
     cap = load_capture(tmp_path / "c.npz")
     snapshot(cap.frames[0], parse_cfg(cap.config), tmp_path / "c.png")
     assert (tmp_path / "c.png").stat().st_size > 0
+
+
+def test_hardware_capture_shows_ddm_sub_bands() -> None:
+    """One frame of a still scene recorded on the AWR1843AOP (2026-11-05, profiles/template.toml):
+    the copies of the object at 1.4 m sit at Doppler 0, +32 and -64, and the empty band
+    -32..-1 is far below them. Checks the byte order and DDM layout against real hardware."""
+    cap = load_capture(Path(__file__).parent / "data" / "still_ddm.npz")
+    cfg = parse_cfg(cap.config)
+    assert cap.meta["mode"] == "ddm" and cap.iq.shape == (1, *raw_frame_shape(cfg), 2)
+    power = np.abs(np.fft.fftshift(spectrum(cap.frames[0][:, :1])[:, 0], axes=0)) ** 2  # [Doppler, range]
+    half = power.shape[0] // 2
+    range_bin = 8 + int(np.argmax(power[half, 8:]))  # strongest still object beyond the leakage
+    db = 10 * np.log10(power[:, range_bin])
+    copies = db[[half - 64, half, half + 32]]
+    assert range_bin * chirp_axes(cfg, power.shape[0])[0] == pytest.approx(1.4, abs=0.1)
+    assert db[half - 32:half].max() < copies.min() - 30
