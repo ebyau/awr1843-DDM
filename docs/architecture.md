@@ -1,98 +1,75 @@
 # Architecture
 
-This page explains how DDM-MIMO is split between the radar and the PC: the radar transmits the
-phase-coded chirps and streams raw ADC samples, and all signal processing is left to the PC.
-It covers the signal model, the firmware, the raw data format and where each part lives in the
-code. Firmware paths are relative to
-`sdk/packages/ti/`.
+The radar transmits phase-coded chirps and streams raw ADC samples; all processing is on the PC.
+Firmware paths are relative to `sdk/packages/ti/`.
 
 ## Terms
 
 | Term | Meaning |
 |---|---|
-| TDM-MIMO | Time-division multiplexing: one TX antenna per chirp, TX antennas take turns. TI's stock demo. |
-| DDM-MIMO | Doppler-division multiplexing: all TX antennas on every chirp, separated by a per-chirp phase code that shifts each TX in the Doppler spectrum. |
-| Virtual array | The TX × RX antenna pairs used for angle estimation. 3 TX × 4 RX = 12 elements. |
-| MSS | Master subsystem, ARM Cortex-R4F: runs this firmware (command line, RF configuration, LVDS stream). |
-| DSS | DSP subsystem (C674x DSP and FFT accelerator). Unused: the image contains no DSP program. |
-| BSS | Radar subsystem that runs the RF front end. Configured from the MSS through mmWaveLink (`rl*` calls). |
-| CBUFF / LVDS | The hardware that copies each chirp's ADC samples from the ADC buffer onto the two LVDS lanes, without the CPU. |
+| TDM-MIMO | One TX per chirp, taking turns (TI's demo). |
+| DDM-MIMO | All TX on every chirp, separated by a per-chirp phase code that shifts each TX in Doppler. |
+| Virtual array | TX × RX antenna pairs: 3 × 4 = 12. |
+| MSS | ARM Cortex-R4F; runs this firmware (CLI, RF configuration, LVDS stream). |
+| DSS | DSP subsystem; unused, the image has no DSP program. |
+| BSS | Radar subsystem running the RF front end; configured from the MSS through mmWaveLink (`rl*`). |
+| CBUFF / LVDS | Hardware that copies each chirp's ADC samples onto the two LVDS lanes, without the CPU. |
 
 ## Signal model
 
-The AWR1843 has a 6-bit phase shifter per TX (64 steps of 5.625°) that can be programmed per
-chirp. With `ddmCfg N` (N sub-bands), the firmware programs TX *k* on chirp *n* of each loop to
+Each TX has a 6-bit phase shifter (64 steps of 5.625°), programmable per chirp. With
+`ddmCfg N`, TX *k* on chirp *n* of each loop gets
 
     programmed phase = −n · k · 360° / N
 
-On this device the IF signal carries the negative of the programmed phase, so in the received
-data TX *k* advances by +*k* · 360°/N per chirp. A constant phase step per chirp is a frequency
-shift in slow time: TX *k*'s copy of a target appears *k* · (Doppler bins / N) bins above the
-TX0 copy, modulo the spectrum width. With N > number of TX, at least one sub-band contains no
-copy.
+The AWR1843AOP inverts the programmed phase in the IF signal, so TX *k* advances by
++*k* · 360°/N per chirp. That shifts its copy of every target *k* · (Doppler bins / N) bins
+above TX0's, modulo the spectrum width. With N > TX count, at least one sub-band stays empty.
 
-The pattern repeats every N chirps, so it is set once with N static chirp definitions
-(`chirpCfg 0..N-1`) looped by `frameCfg`; nothing changes at run time. N must divide 64 so that
-the phase step is a whole number of phase shifter steps.
+The pattern repeats every N chirps: N static chirp definitions (`chirpCfg 0..N-1`) looped by
+`frameCfg`, nothing changed at run time. N divides 64 so the step is a whole number of
+phase-shifter steps.
 
-With the shipped profile (`profiles/template.toml`, N = 4, 32 loops):
-
-| | TDM (stock `profile_3d_aop.cfg`) | DDM (`template.toml`) |
+| | TDM (stock `profile_3d_aop.cfg`) | DDM (`template.toml`, N = 4, 32 loops) |
 |---|---|---|
 | TX per chirp | 1 | 3 |
 | Chirps per frame | 96 (3 × 32) | 128 (4 × 32) |
 | Doppler FFT | 32 bins per TX | 128 bins, 4 sub-bands of 32 |
-| Max unambiguous velocity | ±6.9 m/s | ±5.96 m/s |
+| Max velocity | ±6.9 m/s | ±5.96 m/s |
 | Velocity resolution | 0.43 m/s | 0.093 m/s |
-| Chirps per TX per frame | 32 | 128 |
-| Motion phase between TX copies | one chirp period per TX (left in the data) | none (TX simultaneous) |
-| Virtual array | 12 (3 TX × 4 RX) | 12, same geometry |
+| Motion phase between TX copies | one chirp period per TX | none (TX simultaneous) |
 | Raw data per frame | 384 KB | 512 KB |
 
-The stock TDM profile uses a 46 µs chirp period (7 µs idle + 39 µs ramp), 100 MHz/µs slope
-and 0.042 m range bins; the DDM profile a 159 µs period (100 µs idle + 59 µs ramp),
-67.012 MHz/µs slope and 0.044 m range bins. Both start at 77 GHz with 256 ADC samples. On the
-stock 46 µs chirp, DDM reaches ±20.6 m/s with 0.32 m/s resolution.
+Chirps: TDM 46 µs period (7 idle + 39 ramp), 100 MHz/µs, 0.042 m range bins; DDM 159 µs
+(100 + 59), 67.012 MHz/µs, 0.044 m. Both 77 GHz, 256 samples. On the 46 µs chirp, DDM reaches
+±20.6 m/s at 0.32 m/s resolution.
 
 ## Firmware
 
-The firmware is TI's `xwr18xx_mmw` demo (paths under `demo/xwr18xx/mmw/`) reduced to the MSS.
-It has no on-chip processing: no range or Doppler FFT, no detection, no UART data output. On
-`sensorStart` it:
+TI's `xwr18xx_mmw` demo (`demo/xwr18xx/mmw/`) reduced to the MSS, with no on-chip processing.
+On `sensorStart` it:
 
-1. Opens the RF front end on the first start (`MmwDemo_openSensor`): boot calibration or
-   restore (`calibData`), and the HSI clock for the LVDS interface (`MmwDemo_mssSetHsiClk`).
-2. Checks the configuration with TI's RF parser, which also enforces the DDM rules, and sets up
-   the ADC buffer (`MmwDemo_rawDataConfig`). A rejected configuration stops here, before
-   anything reaches the radar subsystem.
-3. Turns the per-chirp TX phase shifters on or off (`MmwDemo_ddmSetPhaseShifter`, through
-   `rlRfSetMiscConfig`) and applies the profile, chirp and frame configuration (`MMWave_config`).
-4. With `ddmCfg`, programs the phase code of every TX on every chirp definition
-   (`MmwDemo_ddmConfigPhaseShift`, through `rlRfSetPhaseShiftConfig`). TX0 is never
-   phase-shifted; `MmwDemo_ddmPhaseShift` computes the TX1/TX2 values.
-5. Creates and activates the CBUFF hardware session (`mss/mmw_lvds_stream.c`); if that fails,
-   `sensorStart` reports an error and no chirp is sent. Then it starts the frames
-   (`MMWave_start`). From then on every chirp's samples go out over LVDS with no software
-   involved.
+1. Opens the RF front end on the first start (`MmwDemo_openSensor`): calibration or restore
+   (`calibData`), HSI clock for LVDS.
+2. Checks the configuration with TI's RF parser, including the DDM rules, and sets up the ADC
+   buffer (`MmwDemo_rawDataConfig`). A rejected configuration stops here, before the BSS.
+3. Turns the phase shifters on or off (`MmwDemo_ddmSetPhaseShifter`) and applies profile,
+   chirps and frame (`MMWave_config`).
+4. With `ddmCfg`, programs every TX's phase on every chirp (`MmwDemo_ddmConfigPhaseShift`).
+5. Activates the CBUFF session (`mss/mmw_lvds_stream.c`); on failure it reports an error and
+   sends no chirp. Then starts the frames (`MMWave_start`).
 
-`sensorStop` stops the frames, waits for the last one to end (at most 3 s), and deletes the
-CBUFF session.
+`sensorStop` stops the frames, waits up to 3 s for the last one, and deletes the CBUFF session.
 
-Because nothing is processed on the chip, a frame only has to hold the chirp burst: the frame
-period need not leave time for processing or for a UART transfer (only the radar subsystem's
-about 0.3 ms blank time between frames), and the radar cube size is
-not limited by on-chip memory.
+With no on-chip processing, a frame only needs the chirp burst plus the BSS's ~0.3 ms blank,
+and frame size is not limited by on-chip memory.
 
 ## Raw data format
 
-The DCA1000EVM receives the LVDS stream and forwards it over Ethernet; `host/ddm/dca.py` uses
-the capture card driver from [xwr](https://github.com/RadarML/xwr). The capture card is started
-after the radar has stopped and before it starts, so the byte count since the start marks the
-frame boundaries.
+The DCA1000EVM forwards the LVDS stream over Ethernet; `host/ddm/dca.py` reads it with
+[xwr](https://github.com/RadarML/xwr). The card starts before the radar, so the byte count
+marks frame boundaries.
 
-Each frame is `[chirp, rx, sample]` complex 16-bit samples, chirps in transmit order
-(chirp *n* uses chirp definition *n* mod N). On the wire the two lanes give the order
-Q0 Q1 I0 I1 Q2 Q3 I2 I3 …, which `iiqq_to_iq` reorders into int16 (I, Q) pairs. `ddm capture`
-saves every frame unchanged in a `.npz` file, with the configuration text, the MIMO mode, and
-which frames lost data on the way (zero-filled, never left out); `load_capture` returns them
-with this metadata ([format](development.md#raw-data-capture)).
+A frame is `[chirp, rx, sample]` complex int16, chirps in transmit order (chirp *n* uses
+definition *n* mod N). The lanes arrive as Q0 Q1 I0 I1 Q2 Q3 I2 I3 …; `iiqq_to_iq` reorders
+them to (I, Q). Capture file format: [development.md](development.md#raw-data-capture).
