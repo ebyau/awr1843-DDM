@@ -62,18 +62,21 @@ It has no on-chip processing: no range or Doppler FFT, no detection, no UART dat
 
 1. Opens the RF front end on the first start (`MmwDemo_openSensor`): boot calibration or
    restore (`calibData`), and the HSI clock for the LVDS interface (`MmwDemo_mssSetHsiClk`).
-2. Turns the per-chirp TX phase shifters on or off (`MmwDemo_ddmSetPhaseShifter`, through
+2. Checks the configuration with TI's RF parser, which also enforces the DDM rules, and sets up
+   the ADC buffer (`MmwDemo_rawDataConfig`). A rejected configuration stops here, before
+   anything reaches the radar subsystem.
+3. Turns the per-chirp TX phase shifters on or off (`MmwDemo_ddmSetPhaseShifter`, through
    `rlRfSetMiscConfig`) and applies the profile, chirp and frame configuration (`MMWave_config`).
-3. With `ddmCfg`, programs the phase code of every TX on every chirp definition
+4. With `ddmCfg`, programs the phase code of every TX on every chirp definition
    (`MmwDemo_ddmConfigPhaseShift`, through `rlRfSetPhaseShiftConfig`). TX0 is never
    phase-shifted; `MmwDemo_ddmPhaseShift` computes the TX1/TX2 values.
-4. Checks the configuration with TI's RF parser, which also enforces the DDM rules, and sets up
-   the ADC buffer (`MmwDemo_rawDataConfig`).
-5. Creates and activates the CBUFF hardware session (`mss/mmw_lvds_stream.c`) and starts the
-   frames (`MMWave_start`). From then on every chirp's samples go out over LVDS with no
-   software involved.
+5. Creates and activates the CBUFF hardware session (`mss/mmw_lvds_stream.c`); if that fails,
+   `sensorStart` reports an error and no chirp is sent. Then it starts the frames
+   (`MMWave_start`). From then on every chirp's samples go out over LVDS with no software
+   involved.
 
-`sensorStop` stops the frames and deletes the CBUFF session.
+`sensorStop` stops the frames, waits for the last one to end (at most 3 s), and deletes the
+CBUFF session.
 
 Because nothing is processed on the chip, a frame only has to hold the chirp burst: the frame
 period need not leave time for processing or for a UART transfer (only the radar subsystem's

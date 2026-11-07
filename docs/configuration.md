@@ -23,7 +23,13 @@ rejected. The host tools read the radar parameters from the same `.cfg` text.
 | `queryDemoStatus` | Prints the sensor state and the number of frames streamed. |
 
 `sensorStart` without an argument needs `adcbufCfg`, `lvdsStreamCfg` and `calibData` to be
-sent again since the last `sensorStop`, together with the sensor commands.
+sent again since the last successful `sensorStart`, together with the sensor commands. A failed
+`sensorStart` keeps the configuration, so it can be retried with a plain `sensorStart`.
+
+Errors are reported on the CLI, never as `Done`: a configuration the RF parser rejects changes
+nothing in the radar subsystem; an LVDS stream that cannot be set up stops `sensorStart` before
+any chirp is sent; `sensorStop` reports an RF that did not stop (the sensor keeps running) or a
+last frame that did not end within 3 s (the stream is stopped anyway).
 
 ## `ddmCfg`
 
@@ -49,11 +55,14 @@ Behaviour:
 
 - `ddmCfg` must come before `sensorStart`. While the sensor is running it is ignored with
   `Ignored: This command is not allowed after sensor has started`.
-- `sensorStop` resets `numBands` to 0. A configuration that uses DDM must include `ddmCfg`
-  every time it is sent. (TI's `flushCfg` is handled inside the CLI library and does not
-  reset it; `sensorStop` does.)
-- Switching from a DDM configuration back to TDM (`sensorStop`, then a configuration without
-  `ddmCfg`) turns the phase shifters off again at the next `sensorStart`.
+- `ddmCfg` applies to the next `sensorStart` that reconfigures, wherever it appears before it
+  (also before `sensorStop`). A successful start uses it up, so a configuration that uses DDM
+  must include `ddmCfg` every time it is sent; one without it runs TDM. A failed start keeps it
+  for the retry. `sensorStart 0` restarts the last configuration that started; after a failed
+  configuration it is refused until a full configuration starts.
+- For TDM, send `ddmCfg 0` (TOML profiles with `tdm = true` do; add it to a hand-written TDM
+  `.cfg`): otherwise a `ddmCfg` left from a failed start would still apply. Switching back to TDM turns the phase shifters off at the next
+  `sensorStart`.
 
 ## Rules for a DDM configuration
 

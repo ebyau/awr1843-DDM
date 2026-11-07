@@ -107,7 +107,7 @@ typedef struct MmwDemo_LVDSStream_MCB
 
 int32_t MmwDemo_LVDSStreamInit (void);
 int32_t MmwDemo_LVDSStreamHwConfig (void);
-void MmwDemo_configLVDSHwData(void);
+int32_t MmwDemo_configLVDSHwData(void);
 void MmwDemo_LVDSStreamDeleteHwSession (void);
 
 #ifdef __cplusplus

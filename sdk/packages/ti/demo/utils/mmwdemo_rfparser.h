@@ -141,6 +141,11 @@ extern "C" {
  */
 #define MMWDEMO_RFPARSER_EINVAL__VALID_PROFILECFG_NOT_FOUND        (MMWAVE_ERRNO_MMWDEMO_RFPARSER_BASE-13)
 
+/**
+ * @brief   DDM needs one chirp per Doppler sub-band in each frame loop
+ */
+#define MMWDEMO_RFPARSER_EINVAL__DDM_CHIRPS_PER_LOOP               (MMWAVE_ERRNO_MMWDEMO_RFPARSER_BASE-14)
+
 
 /**
 @}

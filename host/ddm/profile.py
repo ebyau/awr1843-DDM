@@ -94,7 +94,8 @@ def render(profile: Profile, source: str = "") -> str:
         f"frameCfg 0 {len(rows) - 1} {frame['loops']} 0 {fmt(frame['period_ms'])} 1 0",
         "lvdsStreamCfg -1 0 1 0",
         "calibData 0 0 0",
-        *([] if mimo["tdm"] else [f"ddmCfg {mimo['bands']}"]),
+        # TDM sends ddmCfg 0: the firmware keeps a ddmCfg until a start succeeds
+        f"ddmCfg {0 if mimo['tdm'] else mimo['bands']}",
     ]
     lines = apply_extra(lines, profile["extra"]["lines"])
     header = [f"% Generated from {source} by 'ddm cfg'; edit the profile, not this file."] if source else []
@@ -143,13 +144,9 @@ def load(path: Path, allow_tdm: bool = False) -> tuple[str, Config]:
             problems = [f"limits not checked ({err})"]
         for problem in problems:
             log.warning("%s: %s", path, problem)
-        commands = [line.split()[0] for line in text.splitlines() if line.split() and line[0] != "%"]
-        if "ddmCfg" in commands and "sensorStop" in commands[commands.index("ddmCfg"):]:
-            raise ValueError(f"{path}: ddmCfg comes before sensorStop, which clears it; "
-                             "move ddmCfg after sensorStop")
         if "ddmCfg" not in cfg and not allow_tdm:
             raise ValueError(f"{path} has no ddmCfg, so the radar would run TDM (one TX per chirp). "
-                             "Add 'ddmCfg 4' for DDM, or pass --tdm if TDM is intended")
+                             "Add 'ddmCfg 4' for DDM, or 'ddmCfg 0' (or --tdm) if TDM is intended")
     return text, cfg
 
 

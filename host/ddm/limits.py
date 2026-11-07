@@ -28,7 +28,11 @@ PROFILE_MAX_US = {"idle_us": 524287 * 0.01, "ramp_end_us": 500000 * 0.01}
 
 
 def check(cfg: Config) -> list[str]:
-    """Descriptions of every limit the configuration violates; empty if none."""
+    """Descriptions of every limit the configuration violates; empty if none.
+
+    The DDM checks mirror the firmware, so a profile fails here instead of at sensorStart:
+    ddmCfg band count (mmw_cli.c MmwDemo_CLIDdmCfg), TX mask, chirps per loop and equal masks
+    (mmwdemo_rfparser.c MmwDemo_RFParser_setDdmParams). The others are hardware limits."""
     problems = []
     bands, num_tx = ddm_params(cfg)
     if bands:

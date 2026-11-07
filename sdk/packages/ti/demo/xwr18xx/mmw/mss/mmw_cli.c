@@ -213,15 +213,19 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
     if (doReconfig)
     {
         CLI_getMMWaveExtensionConfig (&gMmwMssMCB.cfg.ctrlCfg);
+        gMmwMssMCB.ddmNumBands = gMmwMssMCB.ddmPendingBands;
         retVal = MmwDemo_configSensor();
         if (retVal != 0)
         {
+            /* The ADC buffer and the radar subsystem may now hold different layouts:
+             * refuse "sensorStart 0" until a full configuration starts successfully */
+            if (gMmwMssMCB.sensorState == MmwDemo_SensorState_STOPPED)
+            {
+                gMmwMssMCB.sensorState = MmwDemo_SensorState_OPENED;
+            }
             CLI_write ("Error: MmwDemo_configSensor failed [%d]\n", retVal);
             return -1;
         }
-        gMmwMssMCB.isAdcBufCfgPending = 0;
-        gMmwMssMCB.isLvdsStreamCfgPending = 0;
-        gMmwMssMCB.isCalibCfgPending = 0;
     }
     retVal = MmwDemo_startSensor();
     if (retVal != 0)
@@ -230,6 +234,15 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
         return -1;
     }
 
+    /* Only a successful start consumes the configuration, so a failed start can be
+     * retried with a plain sensorStart */
+    if (doReconfig)
+    {
+        gMmwMssMCB.isAdcBufCfgPending = 0;
+        gMmwMssMCB.isLvdsStreamCfgPending = 0;
+        gMmwMssMCB.isCalibCfgPending = 0;
+        gMmwMssMCB.ddmPendingBands = 0U;
+    }
     gMmwMssMCB.sensorState = MmwDemo_SensorState_STARTED;
     return 0;
 }
@@ -251,9 +264,7 @@ static int32_t MmwDemo_CLISensorStart (int32_t argc, char* argv[])
  */
 static int32_t MmwDemo_CLISensorStop (int32_t argc, char* argv[])
 {
-    /* flushCfg is handled by the CLI library, so DDM is cleared here instead:
-     * every configuration that wants DDM must issue ddmCfg again. */
-    gMmwMssMCB.ddmNumBands = 0U;
+    int32_t retVal;
 
     if ((gMmwMssMCB.sensorState == MmwDemo_SensorState_STOPPED) ||
         (gMmwMssMCB.sensorState == MmwDemo_SensorState_INIT) ||
@@ -263,10 +274,15 @@ static int32_t MmwDemo_CLISensorStop (int32_t argc, char* argv[])
         return 0;
     }
 
-    MmwDemo_stopSensor();
+    retVal = MmwDemo_stopSensor();
+    if (retVal == -1)
+    {
+        /* The RF did not stop: the sensor is still running */
+        return -1;
+    }
 
     gMmwMssMCB.sensorState = MmwDemo_SensorState_STOPPED;
-    return 0;
+    return retVal;
 }
 
 /**
@@ -475,7 +491,7 @@ static int32_t MmwDemo_CLIDdmCfg (int32_t argc, char* argv[])
         return -1;
     }
 
-    gMmwMssMCB.ddmNumBands = (uint8_t) numBands;
+    gMmwMssMCB.ddmPendingBands = (uint8_t) numBands;
     return 0;
 }
 

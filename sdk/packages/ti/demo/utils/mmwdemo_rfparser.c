@@ -675,7 +675,8 @@ exit:
 /**
  *  @b Description
  *  @n
- *      Sets the antenna parameters for DDM-MIMO. Every chirp of the frame must
+ *      Sets the antenna parameters for DDM-MIMO. Each frame loop must have one chirp
+ *      per sub-band (the phase pattern repeats every loop), and every chirp must
  *      enable the same contiguous set of TX antennas starting at TX0 (the phase
  *      codes are assigned per TX index), and there must be fewer TX than
  *      Doppler sub-bands. The radar cube has SIMO layout: one TX block of
@@ -708,6 +709,10 @@ static int32_t MmwDemo_RFParser_setDdmParams
     if (*pFoundValidProfile == false)
     {
         return 0;
+    }
+    if (frameTotalChirps != (int16_t)outParams->ddmNumBands)
+    {
+        return MMWDEMO_RFPARSER_EINVAL__DDM_CHIRPS_PER_LOOP;
     }
 
     for (chirpIdx = 1; chirpIdx < frameTotalChirps; chirpIdx++)

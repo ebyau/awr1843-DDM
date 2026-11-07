@@ -271,7 +271,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `ruff` and `pytest` on every pu
 |---|---|
 | `test_rawdata.py` (pytest) | Frame shape from a profile and rejection of unsupported streams, the capture card's I/Q byte order, bit-exact int16 capture storage (and loading of older captures), the unwindowed spectrum, spectrum axes that place a simulated target at its true range and velocity, the `ddm show` plot of a capture, capture metadata, and one frame recorded on the board (`test/data/still_ddm.npz`, a still object at 1.4 m) whose TX copies land at Doppler 0, +32 and −64 with the empty band over 30 dB below. |
 | `test_cfg.py` (pytest) | `.cfg` parsing, `ddm_params()` and `range_axis()`. |
-| `test_profile.py` (pytest) | `test/data/aop.toml` (the chirp of TI's `profile_3d_aop.cfg`), with DDM and with TDM, gives the commands of its `test/data/*.cfg` fixture in order; `profiles/template.toml` loads and passes the limits; a TI-style `.cfg` (`test/data/ti_style.cfg`) is sent unchanged with `--tdm` and refused without it; a `ddmCfg` before `sensorStop` is refused; derived numbers, `[extra]` lines, rejected typos, and TOML errors versus `.cfg` warnings. |
+| `test_profile.py` (pytest) | `test/data/aop.toml` (the chirp of TI's `profile_3d_aop.cfg`), with DDM and with TDM, gives the commands of its `test/data/*.cfg` fixture in order; `profiles/template.toml` loads and passes the limits; a TI-style `.cfg` (`test/data/ti_style.cfg`) is sent unchanged with `--tdm` and refused without it; derived numbers, `[extra]` lines, rejected typos, and TOML errors versus `.cfg` warnings. |
 | `test_limits.py` (pytest) | Every fixture passes the hardware-limit checks, and each limit reports a violation. |
 | `rfparser_test` | Compiles TI's `mmwdemo_rfparser.c` with stubbed mmWave control calls and checks the parsed antenna layout or error code for: stock TDM (masks 1, 2, 4), DDM with 4 bands, DDM with 3 bands (rejected), TX0+TX2 only (rejected), and chirps with different TX masks (rejected). |
 
@@ -332,8 +332,8 @@ Host tools (Python): type hints, `from __future__ import annotations`, standard-
 ## Extending the firmware
 
 - **New CLI command.** Add a handler and a table entry in `MmwDemo_CLIInit()`
-  (`mmw_cli.c`), store the value in `MmwDemo_MSS_MCB` (`mmw_mss.h`), and decide whether
-  `sensorStop` should clear it (as for `ddmCfg`).
+  (`mmw_cli.c`), store the value in `MmwDemo_MSS_MCB` (`mmw_mss.h`), and decide when it is
+  cleared (`ddmCfg` is pending until a successful `sensorStart`).
 - **Different number of sub-bands or TX.** The phase codes are in `MmwDemo_ddmPhaseShift()`
   (`mss_main.c`); the host tools read both from the configuration.
 - **Another device.** Check the sign of the phase shift in the IF signal on that device; the

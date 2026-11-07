@@ -276,8 +276,14 @@ typedef struct MmwDemo_MSS_MCB_t
     /*! @brief Flag indicating if @ref calibCfg is pending processing. */
     uint8_t isCalibCfgPending : 1;
 
-    /*! @brief Number of Doppler sub-bands for DDM-MIMO; 0 disables DDM (stock TDM). */
+    /*! @brief Number of Doppler sub-bands for DDM-MIMO of the running configuration;
+     *  0 disables DDM (stock TDM). */
     uint8_t ddmNumBands;
+
+    /*! @brief Sub-bands given by ddmCfg for the next sensorStart. It survives sensorStop and
+     *  a failed start, and is cleared by a successful start, so every configuration that
+     *  wants DDM issues ddmCfg (anywhere before sensorStart). */
+    uint8_t ddmPendingBands;
 
     /*! @brief True while the per-chirp TX phase shifters are enabled in the RF front end. */
     bool isDdmPhaseShifterEnabled;
@@ -289,7 +295,7 @@ typedef struct MmwDemo_MSS_MCB_t
 extern int32_t MmwDemo_openSensor(bool isFirstTimeOpen);
 extern int32_t MmwDemo_configSensor(void);
 extern int32_t MmwDemo_startSensor(void);
-extern void MmwDemo_stopSensor(void);
+extern int32_t MmwDemo_stopSensor(void);
 
 /* Debug Functions */
 extern void _MmwDemo_debugAssert(int32_t expression, const char *file, int32_t line);

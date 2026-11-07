@@ -57,6 +57,7 @@
 #include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/knl/Task.h>
 #include <ti/sysbios/knl/Semaphore.h>
+#include <ti/sysbios/knl/Clock.h>
 #include <ti/sysbios/family/arm/v7r/vim/Hwi.h>
 
 /* mmWave SDK Include Files: */
@@ -196,22 +197,16 @@ static int32_t MmwDemo_mmWaveCtrlStop (void)
         MMWave_decodeError (errCode, &errorLevel, &mmWaveErrorCode, &subsysErrorCode);
         if (errorLevel == MMWave_ErrorLevel_ERROR)
         {
-            /* Error: Display the error message: */
-            System_printf ("Error: mmWave Stop failed [Error code: %d Subsystem: %d]\n",
-                            mmWaveErrorCode, subsysErrorCode);
-
-            /* Not expected */
-            MmwDemo_debugAssert(0);
+            CLI_write ("Error: mmWave Stop failed [Error code: %d Subsystem: %d]\n",
+                       mmWaveErrorCode, subsysErrorCode);
+            return -1;
         }
-        else
-        {
-            /* Warning: This is treated as a successful stop. */
-            System_printf ("mmWave Stop error ignored [Error code: %d Subsystem: %d]\n",
-                            mmWaveErrorCode, subsysErrorCode);
-        }
+        /* Warning: This is treated as a successful stop. */
+        System_printf ("mmWave Stop error ignored [Error code: %d Subsystem: %d]\n",
+                        mmWaveErrorCode, subsysErrorCode);
     }
 
-    return errCode;
+    return 0;
 }
 
 /**
@@ -635,13 +630,7 @@ static int32_t MmwDemo_ddmConfigPhaseShift(void)
     uint32_t            chirp;
     int32_t             retVal;
 
-    if ((gMmwMssMCB.cfg.ctrlCfg.dfeDataOutputMode != MMWave_DFEDataOutputMode_FRAME) ||
-        (((uint32_t)frameCfg->chirpEndIdx - frameCfg->chirpStartIdx + 1U) != numBands))
-    {
-        CLI_write ("Error: DDM needs frameCfg with %d chirps per loop\n", (int32_t)numBands);
-        return -1;
-    }
-
+    /* MmwDemo_rawDataConfig has checked the layout: a legacy frame with numBands chirps per loop */
     memset ((void *)phaseCfg, 0, sizeof(phaseCfg));
     for (chirp = 0U; chirp < numBands; chirp++)
     {
@@ -702,6 +691,11 @@ static int32_t MmwDemo_rawDataConfig(void)
     errCode = MmwDemo_RFParser_parseConfig(&RFparserOutParams, 0, &gMmwMssMCB.cfg.openCfg, ptrCtrlCfg,
                                            &gMmwMssMCB.adcBufCfg, gMmwMssMCB.rfFreqScaleFactor,
                                            false/* no BPM in 18xx demo */);
+    if (errCode == MMWDEMO_RFPARSER_EINVAL__DDM_CHIRPS_PER_LOOP)
+    {
+        CLI_write ("Error: DDM needs frameCfg with %d chirps per loop\n", (int32_t)gMmwMssMCB.ddmNumBands);
+        return -1;
+    }
     if (errCode != 0)
     {
         CLI_write ("Error: invalid profile, chirp or frame configuration [Error:%d]\n", errCode);
@@ -740,6 +734,13 @@ int32_t MmwDemo_configSensor(void)
 {
     int32_t     errCode = 0;
 
+    /* Check the whole layout (DDM rules included) and set up the ADC buffer before any
+     * configuration reaches the radar subsystem, so a bad layout changes nothing there. */
+    if (MmwDemo_rawDataConfig() < 0)
+    {
+        return -1;
+    }
+
     /* Phase shifters are only touched when DDM is or was enabled, so stock TDM
      * configurations send exactly the stock command sequence. */
     if ((gMmwMssMCB.ddmNumBands != 0U) || gMmwMssMCB.isDdmPhaseShifterEnabled)
@@ -767,10 +768,6 @@ int32_t MmwDemo_configSensor(void)
     {
         errCode = -1;
     }
-    else
-    {
-        errCode = MmwDemo_rawDataConfig();
-    }
 
     return errCode;
 }
@@ -793,7 +790,13 @@ int32_t MmwDemo_startSensor(void)
     /*****************************************************************************
      * LVDS :: arm the h/w session so that the first chirp's ADC samples stream out
      *****************************************************************************/
-    MmwDemo_configLVDSHwData();
+    if (MmwDemo_configLVDSHwData() < 0)
+    {
+        return -1;
+    }
+
+    /* Drop a frame end posted after an earlier stop timed out, so the next stop waits */
+    Semaphore_reset(gMmwMssMCB.frameEndSemHandle, 0);
 
     /*****************************************************************************
      * RF :: now start the RF and the real time ticking
@@ -847,17 +850,33 @@ int32_t MmwDemo_startSensor(void)
 /**
  *  @b Description
  *  @n
- *      Stops the RF and the LVDS stream. Blocks until the last frame has ended.
+ *      Stops the RF and the LVDS stream. Waits for the last frame to end, at most
+ *      MMWDEMO_STOP_TIMEOUT_US (longer than the longest frame period, 1.342 s).
  *
- *  @retval  None
+ *  @retval
+ *      Success -   0
+ *  @retval
+ *      Error   -   -1: the RF did not stop (the sensor is still running);
+ *                  -2: the last frame did not end in time (the stream was stopped anyway)
  */
-void MmwDemo_stopSensor(void)
+#define MMWDEMO_STOP_TIMEOUT_US     3000000U
+
+int32_t MmwDemo_stopSensor(void)
 {
     int32_t errCode;
+    int32_t retVal = 0;
 
     /* Stop sensor RF; the frame end event follows the last frame */
-    MmwDemo_mmWaveCtrlStop();
-    Semaphore_pend(gMmwMssMCB.frameEndSemHandle, BIOS_WAIT_FOREVER);
+    if (MmwDemo_mmWaveCtrlStop() < 0)
+    {
+        return -1;
+    }
+    if (!Semaphore_pend(gMmwMssMCB.frameEndSemHandle, MMWDEMO_STOP_TIMEOUT_US / Clock_tickPeriod))
+    {
+        CLI_write ("Error: no frame end within %d ms of stopping; stopping the stream anyway\n",
+                   (int32_t)(MMWDEMO_STOP_TIMEOUT_US / 1000U));
+        retVal = -2;
+    }
 
     /* With one sub-frame the h/w session stays active across frames: deactivate and delete it */
     if (gMmwMssMCB.lvdsStream.hwSessionHandle != NULL)
@@ -881,6 +900,7 @@ void MmwDemo_stopSensor(void)
     /* print for user */
     System_printf("Sensor has been stopped: startCount: %d stopCount %d\n",
                   gMmwMssMCB.sensorStartCount,gMmwMssMCB.sensorStopCount);
+    return retVal;
 }
 
 /**************************************************************************

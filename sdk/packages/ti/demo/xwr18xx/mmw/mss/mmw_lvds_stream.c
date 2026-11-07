@@ -58,6 +58,8 @@
 #include <ti/drivers/edma/edma.h>
 #include <ti/drivers/cbuff/cbuff.h>
 #include <ti/utils/hsiheader/hsiheader.h>
+#include <ti/drivers/uart/UART.h>
+#include <ti/utils/cli/cli.h>
 
 /* MMWAVE Demo Include Files */
 #include <ti/demo/xwr18xx/mmw/mss/mmw_mss.h>
@@ -442,6 +444,14 @@ int32_t MmwDemo_LVDSStreamHwConfig (void)
     retVal = 0;
 
 exit:
+    /* Release a header created before a failure, so the next attempt can create one */
+    if ((retVal < 0) && (streamMcb->isHwSessionHSIHeaderAllocated == true))
+    {
+        if (HSIHeader_deleteHeader (&streamMcb->hwSessionHSIHeader, &errCode) == 0)
+        {
+            streamMcb->isHwSessionHSIHeaderAllocated = false;
+        }
+    }
     return retVal;
 }
 
@@ -453,11 +463,13 @@ exit:
 *      configures desired configuration input and activates the h/w session
 *
 *  @retval
-*      None
+*      Success -   0
+*  @retval
+*      Error   -   <0, reported on the CLI; no session is left active
 */
-void MmwDemo_configLVDSHwData(void)
+int32_t MmwDemo_configLVDSHwData(void)
 {
-    int32_t retVal;
+    int32_t errCode;
 
     /* Delete previous CBUFF HW session if one was configured */
     if(gMmwMssMCB.lvdsStream.hwSessionHandle != NULL)
@@ -468,15 +480,17 @@ void MmwDemo_configLVDSHwData(void)
     /* Configure HW session */
     if (MmwDemo_LVDSStreamHwConfig() < 0)
     {
-        System_printf("Failed LVDS stream HW configuration\n");
-        MmwDemo_debugAssert(0);
+        CLI_write("Error: LVDS stream configuration failed (CBUFF session not created)\n");
+        return -1;
     }
 
-    /* If HW LVDS stream is enabled, start the session here so that ADC samples will be
-    streamed out as soon as the first chirp samples land on ADC*/
-    if(CBUFF_activateSession(gMmwMssMCB.lvdsStream.hwSessionHandle, &retVal) < 0)
+    /* Start the session here so that ADC samples are streamed out as soon as the
+     * first chirp samples land in the ADC buffer */
+    if(CBUFF_activateSession(gMmwMssMCB.lvdsStream.hwSessionHandle, &errCode) < 0)
     {
-        System_printf("Failed to activate CBUFF session for LVDS stream HW. errCode=%d\n",retVal);
-        MmwDemo_debugAssert(0);
+        CLI_write("Error: LVDS stream could not start (CBUFF activate error %d)\n", errCode);
+        MmwDemo_LVDSStreamDeleteHwSession();
+        return -1;
     }
+    return 0;
 }
