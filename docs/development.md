@@ -307,36 +307,3 @@ every firmware change:
 git diff $(git rev-list --max-parents=0 HEAD) -- sdk
 git diff --stat $(git rev-list --max-parents=0 HEAD) -- sdk    # list of changed files
 ```
-
-## Coding conventions
-
-Firmware (C):
-
-- C99, in the style of the surrounding TI code: `Module_functionName` naming (`MmwDemo_`),
-  `g` prefix for globals, TI's file layout.
-- MISRA-C:2012 style: fixed-width integer types, `U` suffix on unsigned constants, no dynamic
-  allocation, every return value checked, explicit casts.
-- A Doxygen comment block on every function and new structure field, in TI's format
-  (`@b Description`, `@n`, `@param[in]`, `@retval`).
-- The firmware only configures the sensor and streams raw data. Signal processing belongs in
-  the host tools.
-- No new compiler warnings: `build.sh` prints the count. Host test code is built with
-  `-Wall -Wextra -Werror`.
-
-Host tools (Python): type hints, `from __future__ import annotations`, standard-library
-`argparse`, `dataclasses`, `logging` and `tomllib` (no other frameworks), logging rather than
-`print` for status messages in library modules, and a clean `ruff check`.
-
-## Extending the firmware
-
-- **New CLI command.** Add a handler and a table entry in `MmwDemo_CLIInit()`
-  (`mmw_cli.c`), store the value in `MmwDemo_MSS_MCB` (`mmw_mss.h`), and decide when it is
-  cleared (`ddmCfg` is pending until a successful `sensorStart`).
-- **Different number of sub-bands or TX.** The phase codes are in `MmwDemo_ddmPhaseShift()`
-  (`mss_main.c`); the host tools read both from the configuration.
-- **Another device.** Check the sign of the phase shift in the IF signal on that device; the
-  AWR1843AOP inverts it (see `MmwDemo_ddmPhaseShift()`).
-- **New host tool.** Add a subcommand in `host/ddm/cli.py`, reuse `radar.py`, `dca.py` and
-  `rawdata.py`, log with `logging.getLogger(__name__)`, add dependencies with `uv add`, and run
-  `uv run ruff check` and `uv run pytest`.
-- **New profile.** Copy `profiles/template.toml`, check it with `ddm cfg`, and follow the rules in [configuration.md](configuration.md).
