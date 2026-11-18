@@ -21,6 +21,7 @@ PHASE_SHIFTER_STEPS = 64  # the sub-band count must divide this
 MAX_CHIRPS_PER_LOOP = 32  # chirp table of the firmware's RF parser
 MAX_LOOPS = 255
 FRAME_BLANK_MS = 0.3  # idle time the radar subsystem needs between frames
+FRAME_PERIOD_MAX_MS = 1342  # frameCfg periodicity (rlFrameCfg_t in TI's rl_sensor.h)
 ADC_BUFFER_BYTES = 16 * 1024  # one ping-pong half of the 32 KB ADC buffer holds one chirp
 RF_BAND_GHZ = (76.0, 81.0)
 # profileCfg maxima of the RF front end (rlProfileCfg_t in TI's rl_sensor.h, 10 ns steps)
@@ -78,8 +79,14 @@ def check(cfg: Config) -> list[str]:
     if burst_ms + FRAME_BLANK_MS > period_ms:
         problems.append(f"chirps take {burst_ms:.2f} ms; with the {FRAME_BLANK_MS:g} ms blank time between "
                         f"frames that exceeds the {period_ms:g} ms frame period")
+    if period_ms > FRAME_PERIOD_MAX_MS:
+        problems.append(f"frame period {period_ms:g} ms; at most {FRAME_PERIOD_MAX_MS} ms")
 
-    rf_end_ghz = p["start_ghz"] + p["slope_mhz_per_us"] * p["ramp_end_us"] / 1e3  # slope may be negative
+    if p["slope_mhz_per_us"] <= 0:  # the hardware allows it, but the range axis would be mirrored
+        problems.append(f"slope {p['slope_mhz_per_us']:g} MHz/us; must be positive (a negative slope "
+                        "mirrors the range axis, bin k becomes bin N-k, which the host does not undo)")
+
+    rf_end_ghz = p["start_ghz"] + p["slope_mhz_per_us"] * p["ramp_end_us"] / 1e3
     if min(p["start_ghz"], rf_end_ghz) < RF_BAND_GHZ[0] or max(p["start_ghz"], rf_end_ghz) > RF_BAND_GHZ[1]:
         problems.append(f"chirp sweeps {p['start_ghz']:g}-{rf_end_ghz:g} GHz, outside "
                         f"{RF_BAND_GHZ[0]:g}-{RF_BAND_GHZ[1]:g} GHz")

@@ -92,7 +92,9 @@ lines = ["calibData 1 0 0x1F0000"]  # replace generated lines of the same comman
 `[chirp]` and `[frame]` are required; other keys default as shown. `[chirp]` also takes
 `tx_power_backoff`, `tx_phase_shifter`, `hpf1_corner`, `hpf2_corner` (default 0). Fixed lines:
 `adcCfg 2 1`, `adcbufCfg -1 0 1 1 1`, `lowPower 0 0`, `lvdsStreamCfg -1 0 1 0`,
-`calibData 0 0 0`. `[extra]` must not contain `sensorStart`.
+`calibData 0 0 0`. `[extra]` must not contain `sensorStart`. Values must have the types shown: numbers,
+integer `loops` and `bands`, `tdm` as `true`/`false` (not `"false"`), lists of integers for `tx` and `rx`,
+and a list of strings for `lines`.
 
 ### Limits
 
@@ -108,8 +110,10 @@ Checked by `cfg`, `capture` and `live`: errors for TOML profiles, warnings for `
 | `samples` × 4 B (padded to 16 B) × RX ≤ 16 KB | **TI hardware limit:** half of the 32 KB ping-pong ADC buffer holds one chirp (≤ 1024 samples with 4 RX) |
 | `idle_us` ≤ 5242.87, `ramp_end_us` ≤ 5000 | **TI hardware limit** (`profileCfg`, 10 ns steps) |
 | ADC sampling ends before the ramp | Otherwise the last samples see no chirp |
-| Chirp within 76–81 GHz | **TI hardware limit** (RF band; negative slopes allowed) |
+| Chirp within 76–81 GHz | **TI hardware limit** (RF band) |
+| `slope_mhz_per_us` > 0 | A negative slope mirrors the range axis (bin k becomes N − k); the host tools assume a positive one |
 | Chirps × chirp period + 0.3 ms ≤ frame period | **TI hardware limit:** BSS blank time between frames |
+| Frame period ≤ 1342 ms | **TI hardware limit** (`frameCfg`) |
 
 Not checked (TI `rl_sensor.h`): `adc_start_us` 0–40.95 µs; complex sample rate ≤ 12500 ksps;
 the data rate (`ddm cfg` shows it) must fit gigabit Ethernet (≤ 125 MB/s; the template needs

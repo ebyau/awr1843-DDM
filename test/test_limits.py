@@ -37,6 +37,8 @@ def test_fixtures_pass(path: Path) -> None:
     (RAW.replace("channelCfg 15", "channelCfg 7"), "1 256 7200", "1 1365 7200", "ADC buffer"),  # 16 B pad
     (RAW, "chirpCfg 3 3 0 0 0 0 0 7\n", "chirpCfg 3 3 0 0 0 0 0 3\n", "same TX mask"),
     (RAW, "profileCfg 0 77 7 3 39 0 0 100", "profileCfg 0 77 7 3 39 0 0 -100", "outside 76-81 GHz"),
+    (RAW, "profileCfg 0 77 7 3 39 0 0 100", "profileCfg 0 81 7 3 39 0 0 -100", "must be positive"),
+    (RAW, "frameCfg 0 3 32 0 100", "frameCfg 0 3 32 0 1343", "at most 1342 ms"),
     (RAW, "profileCfg 0 77 7 ", "profileCfg 0 77 5243 ", "idle_us = 5243 us; at most 5242.87 us"),
     (RAW, "3 39 0 0 100", "3 5001 0 0 0.1", "ramp_end_us = 5001 us; at most 5000 us"),
     (RAW, "profileCfg 0 77", "profileCfg 0 80", "outside 76-81 GHz"),
@@ -49,12 +51,8 @@ def test_violation_is_reported(base: str, old: str, new: str, message: str) -> N
 
 def test_maxima_are_allowed() -> None:
     text = RAW.replace("profileCfg 0 77 7 3 39 0 0 100", "profileCfg 0 77 5242.87 3 39 0 0 100")
-    text = text.replace("frameCfg 0 3 32 0 100", "frameCfg 0 3 1 0 25000")
+    text = text.replace("frameCfg 0 3 32 0 100", "frameCfg 0 3 1 0 1342")
     assert check(parse_cfg(text)) == []
     assert check(parse_cfg(RAW.replace("frameCfg 0 3 32 0 100", "frameCfg 0 3 32 0 6.2"))) == []
     assert check(parse_cfg(RAW.replace("frameCfg 0 3 32 0 100", "frameCfg 0 3 255 0 100"))) == []
 
-
-def test_negative_slope_within_band_is_allowed() -> None:
-    text = RAW.replace("profileCfg 0 77 7 3 39 0 0 100", "profileCfg 0 81 7 3 39 0 0 -100")
-    assert check(parse_cfg(text)) == []

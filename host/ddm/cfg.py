@@ -43,7 +43,7 @@ def range_axis(cfg: Config) -> tuple[int, float]:
     one bin per ADC sample (no zero padding)."""
     p = profile(cfg)
     num_bins = int(p["samples"])
-    slope_hz_per_s = abs(p["slope_mhz_per_us"]) * 1e12  # negative slopes give the same range axis
+    slope_hz_per_s = abs(p["slope_mhz_per_us"]) * 1e12  # limits.check refuses negative slopes (mirrored axis)
     return num_bins, SPEED_OF_LIGHT * p["sample_rate_ksps"] * 1e3 / (2 * slope_hz_per_s * num_bins)
 
 

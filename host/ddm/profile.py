@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import logging
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,41 @@ def read(path: Path) -> Profile:
             raise ValueError(f"{path}: unknown key(s) in [{table}]: {', '.join(sorted(unknown))}")
         if missing := REQUIRED.get(table, set()) - set(keys):
             raise ValueError(f"{path}: [{table}] needs {', '.join(sorted(missing))}")
+    check_types(profile, path)
     return profile
+
+
+def is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)  # TOML true is not 1
+
+
+def is_number(value: Any) -> bool:
+    return is_int(value) or isinstance(value, float)
+
+
+def is_list(kind: Callable[[Any], bool]) -> Callable[[Any], bool]:
+    return lambda value: isinstance(value, list) and all(kind(item) for item in value)
+
+
+# The type of each value; a wrong type (tdm = "false", a string, is true) would silently change the data
+TYPES: dict[str, dict[str, tuple[Callable[[Any], bool], str]]] = {
+    "chirp": {name: (is_number, "a number") for name in PROFILE_FIELDS},
+    "mimo": {"tx": (is_list(is_int), "a list of integers"), "rx": (is_list(is_int), "a list of integers"),
+             "bands": (is_int, "an integer"), "tdm": (lambda v: isinstance(v, bool), "true or false")},
+    "frame": {"loops": (is_int, "an integer"), "period_ms": (is_number, "a number")},
+    "extra": {"lines": (is_list(lambda v: isinstance(v, str)), "a list of strings")},
+}
+
+
+def check_types(profile: Profile, path: Path) -> None:
+    """Raises ValueError naming the first value of the wrong type."""
+    if not isinstance(profile.get("description", ""), str):
+        raise ValueError(f"{path}: description must be a string")
+    for table, types in TYPES.items():
+        for key, value in profile[table].items():
+            valid, expected = types[key]
+            if not valid(value):
+                raise ValueError(f"{path}: [{table}] {key} must be {expected}; got {value!r}")
 
 
 def merge(base: Profile, update: Profile) -> Profile:

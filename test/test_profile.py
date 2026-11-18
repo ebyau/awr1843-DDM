@@ -78,6 +78,13 @@ def write(tmp_path: Path, name: str, text: str) -> Path:
     ("[chirp]\n", "[radar]\n[chirp]\n", "unknown table"),
     ("loops = 32", "", "loops"),
     ("# Chirp", 'extends = "x.toml"\n# Chirp', "unknown table \\[extends\\]"),  # no inheritance
+    ("tdm = false", 'tdm = "false"', "tdm must be true or false"),  # a string would run TDM
+    ("loops = 32", "loops = 32.0", "loops must be an integer"),
+    ("period_ms = 100", "period_ms = true", "period_ms must be a number"),
+    ("rx_gain_db = 30", 'rx_gain_db = "30"', "rx_gain_db must be a number"),
+    ("tdm = false", "tdm = false\ntx = [0, 1.5]", "tx must be a list of integers"),
+    ("# Chirp", '[extra]\nlines = "calibData 0 0 0"\n# Chirp', "lines must be a list of strings"),
+    ("# Chirp", "description = 3\n# Chirp", "description must be a string"),
 ])
 def test_malformed_profile_is_rejected(tmp_path: Path, old: str, new: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
