@@ -122,7 +122,7 @@ Card setup (static IP `192.168.33.30`, `net.core.rmem_max`, switches): xwr's
 | Command | Does | Options |
 |---|---|---|
 | `ddm cfg PROFILE` | Check [limits](configuration.md#limits), log derived numbers, print the `.cfg` | `-o FILE`, `--tdm` |
-| `ddm capture PROFILE` | Record every frame unchanged | `-n N` (50), `-o FILE.npz`, `--cli PORT`, `--tdm` |
+| `ddm capture PROFILE` | Record every frame unchanged, written to disk as it arrives; Ctrl-C or an error still saves the frames received | `-n N` (50), `-o FILE.npz`, `--cli PORT`, `--tdm` |
 | `ddm live PROFILE` | Live 20·log10\|FFT\| range-Doppler of RX 0, no window, scale fixed by the first frame | `--cli PORT`, `--tdm` |
 | `ddm show CAPTURE.npz` | Replay at the frame period; lists incomplete frames | `--snapshot FILE.png` |
 

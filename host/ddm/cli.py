@@ -11,12 +11,13 @@ import argparse
 import itertools
 import logging
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import numpy as np
 
-from .cfg import describe_mode, parse_cfg
+from .cfg import describe_mode, parse_cfg, raw_frame_shape
 from .profile import derived, load
 from .radar import CLI_PORT
 from .rawdata import load_capture, save_capture
@@ -46,22 +47,44 @@ def cmd_capture(args: argparse.Namespace) -> None:
     text, cfg = load(args.profile, args.tdm)
     log.info("mode: %s", describe_mode(cfg))
     out = args.out or CAPTURE_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{args.profile.stem}.npz"
-    stream = capture(text, args.cli, open_capture_card())
-    try:
-        captured = list(itertools.islice(stream, args.frames))
-    finally:
-        stream.close()
-    if not captured:
-        raise TimeoutError("no frames received; check the LVDS cable and capture card")
-    if len(captured) < args.frames:
-        log.warning("stream timed out after %d of %d frames", len(captured), args.frames)
-    complete = [frame.complete for frame in captured]
-    save_capture(out, np.stack([frame.iq for frame in captured]), text, complete,
-                 [frame.timestamp for frame in captured])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shape = (*raw_frame_shape(cfg), 2)
+    complete, timestamp = [], []
+    # Frames go to a memory-mapped file next to the output as they arrive, so a long capture
+    # needs disk space, not RAM; frames received before an error or Ctrl-C are still saved
+    with tempfile.TemporaryDirectory(dir=out.parent) as scratch:
+        iq = np.lib.format.open_memmap(Path(scratch) / "iq.npy", mode="w+", dtype=np.int16,
+                                       shape=(args.frames, *shape))
+        stream = capture(text, args.cli, open_capture_card())
+        error = None  # raised after saving
+        try:
+            for frame in itertools.islice(stream, args.frames):
+                iq[len(complete)] = frame.iq
+                complete.append(frame.complete)
+                timestamp.append(frame.timestamp)
+        except KeyboardInterrupt:
+            log.warning("interrupted after %d of %d frames", len(complete), args.frames)
+        except Exception as err:  # noqa: BLE001 - re-raised after saving
+            error = err
+        try:
+            stream.close()  # stops the radar; can fail after every frame arrived
+        except Exception as err:  # noqa: BLE001 - re-raised after saving
+            if error is None:
+                error = err
+            else:
+                log.error("stopping the radar also failed: %s", err)
+        if not complete:
+            raise error or TimeoutError("no frames received; check the LVDS cable and capture card")
+        if error is None and len(complete) < args.frames:
+            log.warning("stream timed out after %d of %d frames", len(complete), args.frames)
+        save_capture(out, iq[:len(complete)], text, complete, timestamp)
+        del iq  # close the memory map before its directory is removed
     if not all(complete):
         log.warning("%d of %d frames are incomplete (zero-filled, marked in the capture)",
-                    complete.count(False), len(captured))
-    log.info("saved %d frames of %s (chirp, rx, sample, I/Q) to %s", len(captured), captured[0].iq.shape, out)
+                    complete.count(False), len(complete))
+    log.info("saved %d frames of %s (chirp, rx, sample, I/Q) to %s", len(complete), shape, out)
+    if error:
+        raise error
 
 
 def cmd_show(args: argparse.Namespace) -> None:
@@ -135,8 +158,7 @@ def main() -> int:
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr)
     try:
         args.handler(args)
-    # OSError covers TimeoutError, serial.SerialException and missing files;
-    # TypeError covers wrongly typed profile values.
+    # OSError covers TimeoutError, serial.SerialException and missing files.
     except (ValueError, TypeError, RuntimeError, OSError) as err:
         log.error("%s", err, exc_info=args.verbose)
         return 1

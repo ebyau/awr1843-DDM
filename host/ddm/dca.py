@@ -63,5 +63,7 @@ def capture(cfg_text: str, cli_port: str, dca: DCA1000EVM) -> Iterator[Frame]:
                     log.warning("incomplete frame: the capture card lost data (zero-filled)")
                 yield Frame(iiqq_to_iq(frame.data, shape), frame.timestamp, frame.complete)
         finally:
-            sensor_stop(cli)
-            dca.stop()
+            try:
+                sensor_stop(cli)
+            finally:
+                dca.stop()  # also when the serial port fails
